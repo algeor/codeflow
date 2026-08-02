@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Validation"
+  short_description: "Run lightweight checks before each workflow commit."
+  default_prompt: "Validate the current logical implementation step before the runner commits it."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Code Creation"
+  short_description: "Create one logical implementation step in a subagent."
+  default_prompt: "Implement the next approved logical step and return a concise handoff for validation."

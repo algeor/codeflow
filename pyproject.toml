@@ -1,0 +1,21 @@
+[project]
+name = "CodeFlow"
+version = "0.1.0"
+description = "Local approved-PR automation workflow scaffold."
+requires-python = ">=3.11"
+dependencies = [
+  "PyYAML>=6.0",
+  "structlog>=25.0",
+]
+
+[project.optional-dependencies]
+runtime = [
+  "langgraph>=0.2",
+  "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+CodeFlow = "CodeFlow.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

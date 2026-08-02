@@ -1,0 +1,76 @@
+github:
+  repo_url: ""
+  owner: ""
+  repo: ""
+  base_branch: main
+  plan_label: plan-only
+  ready_label: ready-for-review
+  allowed_reviewers: []
+  poll_interval_seconds: 60
+
+agent:
+  default_cli: auto
+  allowed_clis: [claude, codex]
+  cost_policy: balanced
+  models_by_task:
+    implement_init: balanced
+    implement_code_creation: balanced
+    implement_validation: cheap
+    proposal: balanced
+    design: balanced
+    exploration: balanced
+    coding: balanced
+    fixing: balanced
+    summarization: cheap
+    rag_indexing: cheap
+    code_review: balanced
+    security_review: strong
+    test_quality_review: strong
+    final_blocking_review: strong
+  escalation_rules:
+    failed_fix_loops_before_escalation: 1
+    test_regressions_before_escalation: 1
+    security_sensitive_files_use_strong: true
+
+workflow:
+  require_human_approval: true
+  max_iterations: 8
+  max_runtime_minutes: 360
+  billing_currency_code: USD
+  max_workflow_budget_minor_units: null
+  dry_run: false
+  same_pr_for_plan_and_implementation: true
+
+tests:
+  require_tests_before_commit: true
+  commands: []
+
+review:
+  stop_condition: zero_blocking_findings
+  blocking_severities: [critical, high, medium]
+  require_test_quality_review: true
+  roles:
+    backend:
+      patterns: ["**/*.py", "**/*.go", "**/*.java", "**/*.ts"]
+    frontend:
+      patterns: ["**/*.tsx", "**/*.jsx", "**/*.css", "**/*.scss"]
+    security:
+      patterns: ["**/*auth*", "**/*secret*", "**/*token*", "**/*permission*"]
+    infra:
+      patterns: ["Dockerfile", "docker-compose*.yml", ".github/**", "k8s/**", "helm/**"]
+    docs:
+      patterns: ["**/*.md", "docs/**"]
+    test_quality:
+      patterns: ["tests/**", "**/*test*", "**/*spec*"]
+
+rag:
+  enabled: true
+  embedding_model: ""
+  chunking: symbol_aware
+  incremental_reindex: true
+  ignored_paths:
+    - .git/**
+    - node_modules/**
+    - .venv/**
+    - dist/**
+    - build/**
