@@ -12,6 +12,7 @@ class ConfigTests(unittest.TestCase):
         env = {
             "CODEFLOW_BILLING_CURRENCY_CODE": "EUR",
             "CODEFLOW_MAX_WORKFLOW_BUDGET_MINOR_UNITS": "2500",
+            "CODEFLOW_EMBEDDING_MODEL": "text-embedding-3-large",
             "CODEFLOW_MAX_COST_MINOR_UNITS": "9999",
         }
 
@@ -20,9 +21,9 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(settings["CODEFLOW_BILLING_CURRENCY_CODE"], "EUR")
         self.assertEqual(settings["CODEFLOW_MAX_WORKFLOW_BUDGET_MINOR_UNITS"], "2500")
+        self.assertEqual(settings["CODEFLOW_EMBEDDING_MODEL"], "text-embedding-3-large")
         self.assertNotIn("CODEFLOW_MAX_COST_MINOR_UNITS", settings)
 
 
 if __name__ == "__main__":
     unittest.main()
-

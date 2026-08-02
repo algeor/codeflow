@@ -45,6 +45,7 @@ def env_settings() -> dict[str | Any, str | None]:
         "CODEFLOW_AGENT_CLI",
         "CODEFLOW_ALLOWED_AGENT_CLIS",
         "CODEFLOW_COST_POLICY",
+        "CODEFLOW_EMBEDDING_MODEL",
         "CODEFLOW_MAX_ITERATIONS",
         "CODEFLOW_MAX_RUNTIME_MINUTES",
         "CODEFLOW_BILLING_CURRENCY_CODE",

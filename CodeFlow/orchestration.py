@@ -40,6 +40,7 @@ SUMMARY_FIELDS = {
         "files_changed",
         "tests_changed",
         "tests_to_run",
+        "precommit_run",
         "review_roles_suggested",
         "blocking_questions",
         "reason",

@@ -29,6 +29,8 @@ Do not rediscover broad repo context unless an input is missing or stale.
 - Add or update real tests for changed behavior.
 - Do not create weak, fake, quota-filling, or always-passing tests.
 - Do not run broad validation unless needed to choose implementation details.
+- Before exiting successfully, run configured pre-commit hooks without creating a commit.
+- If configured pre-commit hooks cannot run or fail, return `status: blocked` and summarize the failure.
 - Do not run `git add`, `git commit`, or `git push`.
 - Do not stage files, create commits, create branches, push branches, or open PRs.
 - If blocked by ambiguity, stop and return `status: blocked` with concise questions.
@@ -38,8 +40,9 @@ Do not rediscover broad repo context unless an input is missing or stale.
 1. Read only the files needed for the selected logical step.
 2. Implement the code and test changes for that step.
 3. Run only fast, local checks needed while editing, if useful.
-4. Record the tests and validation commands that `implement-validation` should run.
-5. Return a concise JSON result for the orchestrator.
+4. Run pre-commit hooks without committing, for example `pre-commit run --files <changed files>` when available.
+5. Record the tests and validation commands that `implement-validation` should run.
+6. Return a concise JSON result for the orchestrator.
 
 ## Final Output
 
@@ -54,6 +57,11 @@ The final line must be valid JSON using this shape:
   "files_changed": ["path/to/file.py"],
   "tests_changed": ["tests/test_example.py"],
   "tests_to_run": ["pytest tests/test_example.py"],
+  "precommit_run": {
+    "command": "pre-commit run --files path/to/file.py tests/test_example.py",
+    "status": "passed",
+    "summary": "hooks passed"
+  },
   "validation_notes": ["targeted test covers the new branch"],
   "review_roles_suggested": ["backend", "test_quality"],
   "blocking_questions": []
@@ -71,6 +79,11 @@ For blocked work:
   "files_changed": [],
   "tests_changed": [],
   "tests_to_run": [],
+  "precommit_run": {
+    "command": null,
+    "status": "not_run",
+    "summary": "blocked before pre-commit hooks"
+  },
   "validation_notes": [],
   "review_roles_suggested": [],
   "blocking_questions": ["Which API behavior should be preserved?"],

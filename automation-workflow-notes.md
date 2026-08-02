@@ -92,8 +92,23 @@ Rules:
 
 - Start task N only after task N-1 completes successfully.
 - Keep heavy work inside subagents: repo reading, file edits, tests, and git operations.
+- The code-creation subagent runs configured pre-commit hooks before exiting successfully, without creating a commit.
 - The orchestrator tracks statuses, stores phase outputs, and passes concise summaries between phases.
 - The orchestrator does not directly read the full repo, edit files, run tests, commit, or push.
+
+Fake harness test:
+
+- `CodeFlow/workflow_runner.py` provides an offline runner that accepts fake phase JSON responses.
+- `tests/test_workflow_runner.py` verifies happy path, init escalation, code-creation block, pre-commit failure, validation failure, and summary passing.
+- Run it with `PYTHONDONTWRITEBYTECODE=1 python -m unittest tests.test_workflow_runner -v`.
+
+Claude connection:
+
+- `CliPhaseAgent` adapts any CLI adapter to the same phase-agent interface used by the fake harness.
+- `ClaudePhaseAgent` uses `ClaudeCliAdapter`, writes one prompt per phase, routes the task to a configured Claude model, invokes `claude --print --output-format json`, and parses the phase JSON result.
+- Tests use a scripted Claude adapter so the workflow contract is verified without spending tokens.
+- CLI smoke command: `python -m CodeFlow run <change_name> --agent claude --dry-run --json`.
+- Current Claude CLI mode requires `--dry-run`; prompts forbid file edits, shell commands, git config, commits, and pushes until real apply mode is explicitly wired.
 
 ## Review Role Detection Ideas
 
@@ -498,6 +513,7 @@ Recommended config keys in `.CodeFlow/config.yaml`:
 - `agent.default_cli`: `claude`, `codex`, or `auto`
 - `agent.cost_policy`: `min_cost`, `balanced`, or `max_quality`
 - `agent.allowed_clis`: list of allowed CLIs
+- `agent.model_profiles`: concrete model IDs or CLI aliases per tier and CLI
 - `agent.models_by_task`: model preferences per task type
 - `agent.escalation_rules`: when to move to a stronger model
 - `workflow.max_workflow_budget_minor_units`: workflow-level budget ceiling in the configured currency's minor units
@@ -559,9 +575,7 @@ GitHub auth:
 
 Model configuration:
 
-- `CODEFLOW_PLANNER_MODEL`: model for proposal/design/spec generation.
-- `CODEFLOW_CODER_MODEL`: model for implementation.
-- `CODEFLOW_REVIEW_MODEL`: model for local review agents.
+- Concrete planner/coder/reviewer models live in `.CodeFlow/config.yaml` under `agent.model_profiles` and `agent.models_by_task`.
 - `CODEFLOW_EMBEDDING_MODEL`: embedding model for repo RAG.
 - `CODEFLOW_AGENT_CLI`: `claude`, `codex`, or `auto`.
 - `CODEFLOW_ALLOWED_AGENT_CLIS`: comma-separated list, for example `claude,codex`.
@@ -784,6 +798,22 @@ agent:
   default_cli: auto
   allowed_clis: [claude, codex]
   cost_policy: balanced
+  model_profiles:
+    cheap:
+      codex:
+        model: gpt-5-mini
+      claude:
+        model: haiku
+    balanced:
+      codex:
+        model: gpt-5
+      claude:
+        model: sonnet
+    strong:
+      codex:
+        model: gpt-5
+      claude:
+        model: opus
   models_by_task:
     implement_init: balanced
     implement_code_creation: balanced

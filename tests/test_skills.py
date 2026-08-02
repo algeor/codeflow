@@ -23,6 +23,9 @@ class SkillTests(unittest.TestCase):
         self.assertIn("Run this phase in a dedicated subagent", skill)
         self.assertIn('"status": "completed"', skill)
         self.assertIn('"tests_to_run": ["pytest tests/test_example.py"]', skill)
+        self.assertIn("Before exiting successfully, run configured pre-commit hooks", skill)
+        self.assertIn("pre-commit run --files <changed files>", skill)
+        self.assertIn('"precommit_run": {', skill)
         self.assertIn("Do not run `git add`, `git commit`, or `git push`", skill)
         self.assertIn("without rereading the whole repository", skill)
 

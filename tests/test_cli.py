@@ -80,6 +80,112 @@ agent:
         self.assertEqual(log_line["event"], "doctor_blocking_failure")
         self.assertEqual(log_line["check_name"], "agent_cli")
 
+    def test_doctor_fails_when_model_profiles_are_invalid(self) -> None:
+        config = """
+agent:
+  default_cli: claude
+  allowed_clis: [claude]
+  model_profiles:
+    cheap:
+      claude:
+        model: haiku
+    balanced:
+      claude:
+        model: sonnet
+    strong:
+      claude:
+        model: ""
+"""
+        env = {"CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(config)
+
+            with patch.dict(os.environ, env, clear=True), patch("CodeFlow.cli.find_executable", fake_find_executable):
+                exit_code, stdout, stderr = self.run_main(["--config", str(config_path), "doctor", "--json"])
+
+        self.assertEqual(exit_code, 1)
+        result = json.loads(stdout)
+        model_check = next(check for check in result["checks"] if check["name"] == "model_profiles")
+        self.assertFalse(model_check["ok"])
+        self.assertEqual(model_check["errors"], ["agent.model_profiles.strong.claude.model is required"])
+        log_line = json.loads(stderr.strip())
+        self.assertEqual(log_line["check_name"], "model_profiles")
+
+    def test_run_claude_requires_dry_run_for_now(self) -> None:
+        exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("requires --dry-run", stderr)
+
+    def test_run_claude_dry_run_invokes_workflow_and_prints_json(self) -> None:
+        class AvailableAdapter:
+            def is_available(self) -> bool:
+                return True
+
+        class StubClaudePhaseAgent:
+            instances: list["StubClaudePhaseAgent"] = []
+
+            def __init__(self, *, config, work_dir, timeout_seconds):
+                self.config = config
+                self.work_dir = work_dir
+                self.timeout_seconds = timeout_seconds
+                self.adapter = AvailableAdapter()
+                self.contexts = {}
+                self.instances.append(self)
+
+            def run_phase(self, phase, context):
+                self.contexts[phase.phase_id] = dict(context)
+                responses = {
+                    "init": {"status": "ready", "validation_commands": []},
+                    "code_creation": {
+                        "status": "completed",
+                        "logical_step": "budget-guard",
+                        "files_changed": ["CodeFlow/budget.py"],
+                        "precommit_run": {"status": "passed"},
+                    },
+                    "validation": {"status": "passed", "safe_to_commit": True, "commands_run": []},
+                }
+                return responses[phase.phase_id]
+
+        config = """
+agent:
+  default_cli: claude
+  allowed_clis: [claude]
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            work_dir = Path(tmpdir) / "run"
+            config_path.write_text(config)
+
+            with patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "run",
+                        "budget-guard",
+                        "--agent",
+                        "claude",
+                        "--dry-run",
+                        "--work-dir",
+                        str(work_dir),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout)
+        self.assertEqual(result["phase_order"], ["init", "code_creation", "validation"])
+        self.assertTrue(result["safe_to_commit"])
+        agent = StubClaudePhaseAgent.instances[0]
+        self.assertEqual(agent.work_dir, work_dir)
+        self.assertTrue(agent.contexts["init"]["dry_run"])
+        self.assertEqual(agent.contexts["init"]["change_name"], "budget-guard")
+
 
 if __name__ == "__main__":
     unittest.main()

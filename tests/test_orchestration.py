@@ -39,6 +39,7 @@ class OrchestrationTests(unittest.TestCase):
                 "logical_step": "add-budget-check",
                 "summary": "Added budget guard.",
                 "files_changed": ["CodeFlow/budget.py"],
+                "precommit_run": {"status": "passed"},
                 "large_internal_trace": "ignored",
             },
         )
@@ -46,6 +47,7 @@ class OrchestrationTests(unittest.TestCase):
         parsed = json.loads(summary)
         self.assertEqual(parsed["logical_step"], "add-budget-check")
         self.assertEqual(parsed["files_changed"], ["CodeFlow/budget.py"])
+        self.assertEqual(parsed["precommit_run"], {"status": "passed"})
         self.assertNotIn("large_internal_trace", parsed)
 
 

@@ -12,6 +12,22 @@ agent:
   default_cli: auto
   allowed_clis: [claude, codex]
   cost_policy: balanced
+  model_profiles:
+    cheap:
+      codex:
+        model: gpt-5-mini
+      claude:
+        model: haiku
+    balanced:
+      codex:
+        model: gpt-5
+      claude:
+        model: sonnet
+    strong:
+      codex:
+        model: gpt-5
+      claude:
+        model: opus
   models_by_task:
     implement_init: balanced
     implement_code_creation: balanced
