@@ -279,6 +279,65 @@ agent:
         self.assertTrue(output["implementation_allowed"])
         self.assertEqual(output["approval"]["approved_by"], ["reviewer-one"])
 
+    def test_review_plan_detects_roles_from_files(self) -> None:
+        config = """
+review:
+  roles:
+    backend:
+      patterns: ["**/*.py"]
+    docs:
+      patterns: ["**/*.md"]
+    test_quality:
+      patterns: ["tests/**"]
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(config)
+
+            exit_code, stdout, stderr = self.run_main(
+                [
+                    "--config",
+                    str(config_path),
+                    "review-plan",
+                    "readme-plan",
+                    "--file",
+                    "README.md",
+                    "--file",
+                    "tests/test_readme.py",
+                    "--json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["required_roles"], ["backend", "docs", "test_quality"])
+        self.assertEqual(output["review_tasks"], ["code_review", "test_quality_review", "final_blocking_review"])
+
+    def test_review_plan_fetches_changed_files_from_pr(self) -> None:
+        config = {"review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+            "CodeFlow.cli.fetch_pull_request_changed_files", lambda pr_number, config: ["README.md"]
+        ):
+            exit_code, stdout, stderr = self.run_main(
+                ["review-plan", "readme-plan", "--pr-number", "2", "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["pull_request_number"], 2)
+        self.assertEqual(output["changed_files"], ["README.md"])
+        self.assertEqual(output["required_roles"], ["docs"])
+
+    def test_review_plan_requires_pr_number_or_file(self) -> None:
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: {}):
+            exit_code, _, stderr = self.run_main(["review-plan", "readme-plan"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("requires --pr-number or at least one --file", stderr)
+
     def test_run_real_implementation_requires_pr_number(self) -> None:
         config = """
 agent:

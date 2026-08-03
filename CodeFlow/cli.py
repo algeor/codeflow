@@ -23,7 +23,8 @@ from .config import (
 from .git_workflow import GitWorkflowError, commit_and_push_validated_step
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
-from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request
+from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request, fetch_pull_request_changed_files
+from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
 
@@ -386,6 +387,36 @@ def command_status(args: argparse.Namespace) -> int:
     return 0 if result["implementation_allowed"] else 1
 
 
+def command_review_plan(args: argparse.Namespace) -> int:
+    try:
+        config = load_project_config(args.config)
+        changed_files = _review_plan_changed_files(args, config)
+    except (ConfigError, PullRequestError) as exc:
+        print(f"review-plan error: {exc}", file=sys.stderr)
+        return 1
+
+    review_plan = detect_review_plan(changed_files, config)
+    result = {
+        "change_name": args.change_name,
+        "pull_request_number": args.pr_number,
+        **review_plan.to_dict(),
+    }
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"CodeFlow review-plan {args.change_name}: {', '.join(result['required_roles']) or 'no roles'}")
+        print(f"review_tasks: {', '.join(result['review_tasks']) or 'none'}")
+    return 0
+
+
+def _review_plan_changed_files(args: argparse.Namespace, config: dict[str, Any]) -> list[str]:
+    if args.files:
+        return list(args.files)
+    if args.pr_number is None:
+        raise PullRequestError("review-plan requires --pr-number or at least one --file")
+    return fetch_pull_request_changed_files(args.pr_number, config=config)
+
+
 def command_resume(args: argparse.Namespace) -> int:
     return _scaffold_notice("resume", args.change_name)
 
@@ -432,6 +463,13 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--pr-number", type=int, help="GitHub PR number to inspect")
     status.add_argument("--json", action="store_true", help="Print machine-readable status output")
     status.set_defaults(func=command_status)
+
+    review_plan = subparsers.add_parser("review-plan", help="Detect required review roles for a PR or file list")
+    review_plan.add_argument("change_name")
+    review_plan.add_argument("--pr-number", type=int, help="GitHub PR number to inspect")
+    review_plan.add_argument("--file", dest="files", action="append", default=[], help="Changed file path to classify")
+    review_plan.add_argument("--json", action="store_true", help="Print machine-readable review plan output")
+    review_plan.set_defaults(func=command_review_plan)
 
     resume = subparsers.add_parser("resume", help="Resume an interrupted workflow")
     resume.add_argument("change_name")

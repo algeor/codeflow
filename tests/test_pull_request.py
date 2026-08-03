@@ -7,7 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from CodeFlow.proposal import create_proposal_artifacts
-from CodeFlow.pull_request import CommandResult, PullRequestError, create_plan_pull_request, fetch_pull_request
+from CodeFlow.pull_request import (
+    CommandResult,
+    PullRequestError,
+    create_plan_pull_request,
+    fetch_pull_request,
+    fetch_pull_request_changed_files,
+)
 
 
 class PullRequestTests(unittest.TestCase):
@@ -98,6 +104,20 @@ class PullRequestTests(unittest.TestCase):
                 "number,url,state,reviewDecision,reviews,author,headRefName,baseRefName",
             ],
         )
+
+    def test_fetch_pull_request_changed_files_runs_gh_pr_diff(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(args, env, cwd):
+            calls.append(list(args))
+            return CommandResult(tuple(args), 0, "README.md\nCodeFlow/cli.py\n", "")
+
+        config = {"github": {"owner": "algeor", "repo": "codeflow", "base_branch": "dev"}}
+
+        files = fetch_pull_request_changed_files(2, config=config, runner=runner)
+
+        self.assertEqual(files, ["README.md", "CodeFlow/cli.py"])
+        self.assertEqual(calls[0], ["gh", "pr", "diff", "2", "--repo", "algeor/codeflow", "--name-only"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ CodeFlow is a local automation scaffold for running an approved pull-request wor
 
 ## Current Status
 
-This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, proposal PR creation, approval-gated implementation start, and validated commit/push step are present. Durable Postgres execution, multi-step implementation orchestration, and review/fix automation are still being built.
+This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, proposal PR creation, approval-gated implementation start, validated commit/push step, and review role detection are present. Durable Postgres execution, multi-step implementation orchestration, and review/fix automation are still being built.
 
 Implemented commands:
 
@@ -23,6 +23,7 @@ python -m CodeFlow doctor --json
 python -m CodeFlow propose <change-name> "request text" --json
 python -m CodeFlow propose <change-name> "request text" --open-pr --json
 python -m CodeFlow status <change-name> --pr-number <number> --json
+python -m CodeFlow review-plan <change-name> --pr-number <number> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
 ```
