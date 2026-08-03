@@ -372,7 +372,25 @@ def _workflow_result_to_dict(result: WorkflowRunResult) -> dict[str, Any]:
         "reason": result.reason,
         "phase_results": result.phase_results,
         "summaries": result.summaries,
+        "token_usage": _workflow_token_usage(result.phase_results),
     }
+
+
+def _workflow_token_usage(phase_results: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    phases: dict[str, dict[str, int]] = {}
+    total = {"input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0}
+    for phase_id, phase_result in phase_results.items():
+        invocation = phase_result.get("agent_invocation", {})
+        usage = invocation.get("token_usage", {}) if isinstance(invocation, dict) else {}
+        if not isinstance(usage, dict) or not usage:
+            continue
+        normalized = {key: int(value) for key, value in usage.items() if key in total and isinstance(value, int)}
+        if not normalized:
+            continue
+        phases[phase_id] = normalized
+        for key, value in normalized.items():
+            total[key] += value
+    return {"total": {key: value for key, value in total.items() if value}, "phases": phases}
 
 
 def command_status(args: argparse.Namespace) -> int:

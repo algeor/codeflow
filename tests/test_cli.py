@@ -704,14 +704,24 @@ github:
             def run_phase(self, phase, context):
                 self.contexts[phase.phase_id] = dict(context)
                 responses = {
-                    "init": {"status": "ready", "validation_commands": []},
+                    "init": {
+                        "status": "ready",
+                        "validation_commands": [],
+                        "agent_invocation": {"token_usage": {"input_tokens": 10, "output_tokens": 4}},
+                    },
                     "code_creation": {
                         "status": "completed",
                         "logical_step": "budget-guard",
                         "files_changed": ["CodeFlow/budget.py"],
                         "precommit_run": {"status": "passed"},
+                        "agent_invocation": {"token_usage": {"input_tokens": 20, "output_tokens": 8}},
                     },
-                    "validation": {"status": "passed", "safe_to_commit": True, "commands_run": []},
+                    "validation": {
+                        "status": "passed",
+                        "safe_to_commit": True,
+                        "commands_run": [],
+                        "agent_invocation": {"token_usage": {"input_tokens": 5, "output_tokens": 2}},
+                    },
                 }
                 return responses[phase.phase_id]
 
@@ -747,6 +757,8 @@ agent:
         result = json.loads(stdout)
         self.assertEqual(result["phase_order"], ["init", "code_creation", "validation"])
         self.assertTrue(result["safe_to_commit"])
+        self.assertEqual(result["token_usage"]["total"], {"input_tokens": 35, "output_tokens": 14})
+        self.assertEqual(result["token_usage"]["phases"]["code_creation"], {"input_tokens": 20, "output_tokens": 8})
         agent = StubClaudePhaseAgent.instances[0]
         self.assertEqual(agent.work_dir, work_dir)
         self.assertTrue(agent.contexts["init"]["dry_run"])
