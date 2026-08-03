@@ -3,8 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from CodeFlow.adapters.base import MAX_PROMPT_BYTES, AgentRequest, CliAgentAdapter
+from CodeFlow.adapters.base import MAX_PROMPT_BYTES, AgentRequest, CliAgentAdapter, extract_token_usage
 from CodeFlow.adapters.claude_cli import ClaudeCliAdapter
 from CodeFlow.adapters.codex_cli import CodexCliAdapter
 
@@ -18,6 +19,18 @@ class NoopAdapter(CliAgentAdapter):
 
 
 class AdapterTests(unittest.TestCase):
+    def test_extract_token_usage_from_usage_object(self) -> None:
+        usage = extract_token_usage(
+            '{"usage":{"input_tokens":120,"output_tokens":30,"cache_read_input_tokens":50}}'
+        )
+
+        self.assertEqual(usage.to_dict(), {"input_tokens": 120, "output_tokens": 30, "cached_input_tokens": 50})
+
+    def test_extract_token_usage_from_generic_token_fields(self) -> None:
+        usage = extract_token_usage('{"prompt_tokens":11,"completion_tokens":7,"cached_tokens":3}')
+
+        self.assertEqual(usage.to_dict(), {"input_tokens": 11, "output_tokens": 7, "cached_input_tokens": 3})
+
     def test_missing_prompt_returns_structured_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "nested" / "out.txt"
@@ -98,6 +111,27 @@ class AdapterTests(unittest.TestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertIn("prompt file exceeds", result.stderr)
+
+    def test_invoke_attaches_token_usage_metadata(self) -> None:
+        class Completed:
+            returncode = 0
+            stdout = '{"usage":{"input_tokens":10,"output_tokens":4}}'
+            stderr = ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            prompt_path = Path(tmpdir) / "prompt.txt"
+            prompt_path.write_text("hello")
+            request = AgentRequest(
+                task_type="status",
+                model="test-model",
+                prompt_path=prompt_path,
+                output_path=Path(tmpdir) / "out.txt",
+            )
+
+            with patch("CodeFlow.adapters.base.subprocess.run", lambda *args, **kwargs: Completed()):
+                result = NoopAdapter().invoke(request)
+
+        self.assertEqual(result.metadata, {"token_usage": {"input_tokens": 10, "output_tokens": 4}})
 
     def test_claude_command_includes_expected_schema(self) -> None:
         request = AgentRequest(
