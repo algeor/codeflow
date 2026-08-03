@@ -32,6 +32,7 @@ from .pull_request import (
     fetch_pull_request_changed_files,
     fetch_pull_request_diff,
 )
+from .review_gate import configured_max_iterations, decide_review_loop
 from .review_runner import CliReviewAgent, ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
@@ -467,6 +468,26 @@ def command_review_run(args: argparse.Namespace) -> int:
     return 0 if result["status"] in {"passed", "skipped"} else 1
 
 
+def command_review_gate(args: argparse.Namespace) -> int:
+    try:
+        config = load_project_config(args.config)
+        review_result = _load_json_file(args.review_result_file)
+    except (ConfigError, OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"review-gate error: {exc}", file=sys.stderr)
+        return 1
+
+    max_iterations = args.max_iterations or configured_max_iterations(config)
+    decision = decide_review_loop(review_result, iteration=args.iteration, max_iterations=max_iterations).to_dict()
+    decision["change_name"] = args.change_name
+    if args.json:
+        _print_json(decision)
+    else:
+        print(f"CodeFlow review-gate {args.change_name}: {decision['status']}")
+        print(f"next_action: {decision['next_action']}")
+        print(f"blocking_findings: {decision['blocking_findings_count']}")
+    return 0 if decision["status"] in {"ready", "fix_required"} else 1
+
+
 def _review_changed_files(args: argparse.Namespace, config: dict[str, Any], command_name: str) -> list[str]:
     if args.files:
         return list(args.files)
@@ -500,6 +521,13 @@ def _persist_review_run_result(*, workflow_run_id: str, result: Any, commit_sha:
         close = getattr(connection, "close", None)
         if callable(close):
             close()
+
+
+def _load_json_file(path: str) -> dict[str, Any]:
+    parsed = json.loads(Path(path).read_text())
+    if not isinstance(parsed, dict):
+        raise ValueError("JSON file must contain an object")
+    return parsed
 
 
 def command_resume(args: argparse.Namespace) -> int:
@@ -570,6 +598,14 @@ def build_parser() -> argparse.ArgumentParser:
     review_run.add_argument("--commit-sha", help="Commit SHA reviewed by this review run")
     review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
     review_run.set_defaults(func=command_review_run)
+
+    review_gate = subparsers.add_parser("review-gate", help="Decide whether review output is ready or needs another fix iteration")
+    review_gate.add_argument("change_name")
+    review_gate.add_argument("--review-result-file", required=True, help="Path to review-run JSON output")
+    review_gate.add_argument("--iteration", type=int, default=0, help="Current completed fix iteration count")
+    review_gate.add_argument("--max-iterations", type=int, help="Maximum allowed fix iterations")
+    review_gate.add_argument("--json", action="store_true", help="Print machine-readable review gate output")
+    review_gate.set_defaults(func=command_review_gate)
 
     resume = subparsers.add_parser("resume", help="Resume an interrupted workflow")
     resume.add_argument("change_name")

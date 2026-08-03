@@ -25,6 +25,7 @@ python -m CodeFlow propose <change-name> "request text" --open-pr --json
 python -m CodeFlow status <change-name> --pr-number <number> --json
 python -m CodeFlow review-plan <change-name> --pr-number <number> --json
 python -m CodeFlow review-run <change-name> --pr-number <number> --json
+python -m CodeFlow review-gate <change-name> --review-result-file <path> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
 ```
@@ -102,6 +103,12 @@ Review runs can persist to Postgres when a workflow run already exists:
 
 ```bash
 python -m CodeFlow review-run demo-change --pr-number 12 --workflow-run-id <uuid> --commit-sha <sha> --json
+```
+
+The review gate decides whether to stop, fix again, or finalize:
+
+```bash
+python -m CodeFlow review-gate demo-change --review-result-file /tmp/review-result.json --iteration 0 --json
 ```
 
 ## Project Notes

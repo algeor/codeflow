@@ -560,6 +560,54 @@ review:
         self.assertEqual(exit_code, 1)
         self.assertIn("review-run requires --pr-number or at least one --file", stderr)
 
+    def test_review_gate_returns_fix_required_for_blocking_findings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            review_result = Path(tmpdir) / "review.json"
+            review_result.write_text(json.dumps({"status": "blocked", "findings": [{"blocking": True, "summary": "bug"}]}))
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: {"workflow": {"max_iterations": 3}}):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-gate",
+                        "readme-plan",
+                        "--review-result-file",
+                        str(review_result),
+                        "--iteration",
+                        "0",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["change_name"], "readme-plan")
+        self.assertEqual(output["status"], "fix_required")
+        self.assertEqual(output["next_action"], "run_fix_iteration")
+
+    def test_review_gate_returns_nonzero_after_max_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            review_result = Path(tmpdir) / "review.json"
+            review_result.write_text(json.dumps({"status": "blocked", "findings": [{"blocking": True, "summary": "bug"}]}))
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: {"workflow": {"max_iterations": 1}}):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-gate",
+                        "readme-plan",
+                        "--review-result-file",
+                        str(review_result),
+                        "--iteration",
+                        "1",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["status"], "escalate")
+
     def test_run_real_implementation_requires_pr_number(self) -> None:
         config = """
 agent:
