@@ -78,6 +78,21 @@ def github_cli_environment(env: dict[str, str] | None = None) -> dict[str, str]:
     return environment
 
 
+def allowed_github_reviewers(config: dict[str, Any] | None, env: dict[str, str] | None = None) -> list[str]:
+    environment = env if env is not None else os.environ
+    configured_env = environment.get("CODEFLOW_ALLOWED_REVIEWERS")
+    if configured_env is not None:
+        return _split_csv(configured_env)
+
+    github_config = config.get("github", {}) if isinstance(config, dict) else {}
+    if not isinstance(github_config, dict):
+        return []
+    reviewers = github_config.get("allowed_reviewers") or []
+    if not isinstance(reviewers, list):
+        return []
+    return [str(reviewer).strip() for reviewer in reviewers if str(reviewer).strip()]
+
+
 def load_project_config(path: str | None = None) -> dict[str, Any]:
     config_path = resolve_config_path(path)
     if not config_path.exists():
@@ -101,6 +116,7 @@ def env_settings() -> dict[str | Any, str | None]:
         "CODEFLOW_GITHUB_REPO_URL",
         "CODEFLOW_GITHUB_OWNER",
         "CODEFLOW_GITHUB_REPO",
+        "CODEFLOW_ALLOWED_REVIEWERS",
         "CODEFLOW_BASE_BRANCH",
         "CODEFLOW_LOCAL_REPO_PATH",
         "CODEFLOW_DATABASE_URL",
@@ -144,6 +160,10 @@ def _display_env_value(key: str, value: str) -> str:
     if key in _REDACTED_ENV_KEYS:
         return "<redacted>"
     return value
+
+
+def _split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _parse_env_value(value: str) -> str:

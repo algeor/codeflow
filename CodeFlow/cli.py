@@ -8,11 +8,20 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .approval import evaluate_pull_request_approval
 from .command_discovery import find_executable
-from .config import ConfigError, env_settings, github_settings, load_local_env, load_project_config, resolve_config_path
+from .config import (
+    ConfigError,
+    allowed_github_reviewers,
+    env_settings,
+    github_settings,
+    load_local_env,
+    load_project_config,
+    resolve_config_path,
+)
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
-from .pull_request import PullRequestError, create_plan_pull_request
+from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
 
@@ -256,7 +265,38 @@ def _workflow_result_to_dict(result: WorkflowRunResult) -> dict[str, Any]:
 
 
 def command_status(args: argparse.Namespace) -> int:
-    return _scaffold_notice("status", args.change_name)
+    if args.pr_number is None:
+        print("CodeFlow status currently requires --pr-number.", file=sys.stderr)
+        return 2
+
+    try:
+        config = load_project_config(args.config)
+        pull_request = fetch_pull_request(args.pr_number, config=config)
+    except (ConfigError, PullRequestError) as exc:
+        print(f"status error: {exc}", file=sys.stderr)
+        return 1
+
+    approval = evaluate_pull_request_approval(pull_request, allowed_github_reviewers(config))
+    result = {
+        "change_name": args.change_name,
+        "pull_request": {
+            "number": pull_request.get("number"),
+            "url": pull_request.get("url"),
+            "state": pull_request.get("state"),
+            "head_ref": pull_request.get("headRefName"),
+            "base_ref": pull_request.get("baseRefName"),
+        },
+        "approval": approval.to_dict(),
+        "implementation_allowed": approval.approved and pull_request.get("state") == "OPEN",
+    }
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"CodeFlow status {args.change_name}: PR {pull_request.get('number')} {pull_request.get('state')}")
+        print(f"implementation_allowed: {str(result['implementation_allowed']).lower()}")
+        if approval.blocking_reason:
+            print(f"blocking_reason: {approval.blocking_reason}")
+    return 0 if result["implementation_allowed"] else 1
 
 
 def command_resume(args: argparse.Namespace) -> int:
@@ -301,6 +341,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="Show workflow status")
     status.add_argument("change_name")
+    status.add_argument("--pr-number", type=int, help="GitHub PR number to inspect")
+    status.add_argument("--json", action="store_true", help="Print machine-readable status output")
     status.set_defaults(func=command_status)
 
     resume = subparsers.add_parser("resume", help="Resume an interrupted workflow")

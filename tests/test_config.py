@@ -6,7 +6,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from CodeFlow.config import env_settings, github_cli_environment, github_settings, load_local_env, parse_env_file
+from CodeFlow.config import (
+    allowed_github_reviewers,
+    env_settings,
+    github_cli_environment,
+    github_settings,
+    load_local_env,
+    parse_env_file,
+)
 
 
 class ConfigTests(unittest.TestCase):
@@ -75,6 +82,14 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(env["GH_HOST"], "github.com")
         self.assertEqual(env["GH_TOKEN"], "token-value")
+
+    def test_allowed_github_reviewers_prefers_env_csv(self) -> None:
+        reviewers = allowed_github_reviewers(
+            {"github": {"allowed_reviewers": ["config-reviewer"]}},
+            env={"CODEFLOW_ALLOWED_REVIEWERS": "reviewer-one, reviewer-two"},
+        )
+
+        self.assertEqual(reviewers, ["reviewer-one", "reviewer-two"])
 
 
 if __name__ == "__main__":

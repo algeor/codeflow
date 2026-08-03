@@ -22,13 +22,13 @@ Implemented commands:
 python -m CodeFlow doctor --json
 python -m CodeFlow propose <change-name> "request text" --json
 python -m CodeFlow propose <change-name> "request text" --open-pr --json
+python -m CodeFlow status <change-name> --pr-number <number> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
 ```
 
 Scaffolded commands:
 
 ```bash
-python -m CodeFlow status <change-name>
 python -m CodeFlow resume <change-name>
 python -m CodeFlow abort <change-name>
 ```

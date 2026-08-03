@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from CodeFlow.proposal import create_proposal_artifacts
-from CodeFlow.pull_request import CommandResult, PullRequestError, create_plan_pull_request
+from CodeFlow.pull_request import CommandResult, PullRequestError, create_plan_pull_request, fetch_pull_request
 
 
 class PullRequestTests(unittest.TestCase):
@@ -67,6 +67,37 @@ class PullRequestTests(unittest.TestCase):
 
             with self.assertRaisesRegex(PullRequestError, "branch already exists"):
                 create_plan_pull_request(proposal, config=config, cwd=root, runner=runner)
+
+    def test_fetch_pull_request_runs_gh_pr_view(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(args, env, cwd):
+            calls.append(list(args))
+            return CommandResult(
+                tuple(args),
+                0,
+                '{"number":2,"url":"https://github.com/algeor/codeflow/pull/2","state":"OPEN","reviews":[]}',
+                "",
+            )
+
+        config = {"github": {"owner": "algeor", "repo": "codeflow", "base_branch": "dev"}}
+
+        result = fetch_pull_request(2, config=config, runner=runner)
+
+        self.assertEqual(result["number"], 2)
+        self.assertEqual(
+            calls[0],
+            [
+                "gh",
+                "pr",
+                "view",
+                "2",
+                "--repo",
+                "algeor/codeflow",
+                "--json",
+                "number,url,state,reviewDecision,reviews,author,headRefName,baseRefName",
+            ],
+        )
 
 
 if __name__ == "__main__":

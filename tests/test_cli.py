@@ -230,6 +230,37 @@ agent:
         self.assertEqual(output["pull_request"]["branch"], "plan/readme-documentation-plan")
         self.assertEqual(output["pull_request"]["url"], "https://github.com/algeor/codeflow/pull/2")
 
+    def test_status_requires_pr_number(self) -> None:
+        exit_code, _, stderr = self.run_main(["status", "readme-documentation-plan"])
+
+        self.assertEqual(exit_code, 2)
+        self.assertIn("requires --pr-number", stderr)
+
+    def test_status_reports_approval_gate_result(self) -> None:
+        pr_data = {
+            "number": 2,
+            "url": "https://github.com/algeor/codeflow/pull/2",
+            "state": "OPEN",
+            "headRefName": "plan/readme-documentation-plan",
+            "baseRefName": "dev",
+            "author": {"login": "algeor"},
+            "reviews": [{"author": {"login": "reviewer-one"}, "state": "APPROVED"}],
+        }
+        config = {"github": {"allowed_reviewers": ["reviewer-one"]}}
+
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+            "CodeFlow.cli.fetch_pull_request", lambda pr_number, config: pr_data
+        ):
+            exit_code, stdout, stderr = self.run_main(
+                ["status", "readme-documentation-plan", "--pr-number", "2", "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertTrue(output["implementation_allowed"])
+        self.assertEqual(output["approval"]["approved_by"], ["reviewer-one"])
+
     def test_run_claude_requires_dry_run_for_now(self) -> None:
         exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])
 

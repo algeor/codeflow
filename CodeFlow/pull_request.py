@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -73,6 +74,45 @@ def create_plan_pull_request(
         raise PullRequestError(f"command failed ({' '.join(pr_create_command)}): {message}")
 
     return PlanPullRequestResult(branch=branch, url=_extract_pr_url(pr_create_output.stdout), commands_run=commands_run)
+
+
+def fetch_pull_request(
+    pr_number: int,
+    *,
+    config: dict[str, Any],
+    cwd: Path | str = Path("."),
+    runner: CommandRunner | None = None,
+) -> dict[str, Any]:
+    settings = github_settings(config)
+    owner = settings["owner"]
+    repo = settings["repo"]
+    if not owner or not repo:
+        raise PullRequestError("GitHub owner and repo are required to read a PR")
+
+    command = [
+        "gh",
+        "pr",
+        "view",
+        str(pr_number),
+        "--repo",
+        f"{owner}/{repo}",
+        "--json",
+        "number,url,state,reviewDecision,reviews,author,headRefName,baseRefName",
+    ]
+    env = github_cli_environment()
+    env["GH_HOST"] = settings["host"]
+    result = (runner or run_command)(command, env, Path(cwd))
+    if result.return_code != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "gh pr view failed"
+        raise PullRequestError(f"command failed ({' '.join(command)}): {message}")
+
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise PullRequestError(f"gh pr view returned invalid JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise PullRequestError("gh pr view JSON must be an object")
+    return parsed
 
 
 def run_command(args: Sequence[str], env: dict[str, str] | None, cwd: Path) -> CommandResult:
