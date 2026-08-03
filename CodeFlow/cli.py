@@ -12,6 +12,7 @@ from .command_discovery import find_executable
 from .config import ConfigError, env_settings, github_settings, load_local_env, load_project_config, resolve_config_path
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
+from .pull_request import PullRequestError, create_plan_pull_request
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
 
@@ -160,13 +161,25 @@ def command_propose(args: argparse.Namespace) -> int:
         return 1
 
     result_data = result.to_dict()
+    if args.open_pr:
+        try:
+            config = load_project_config(args.config)
+            pull_request = create_plan_pull_request(result, config=config)
+        except (ConfigError, PullRequestError) as exc:
+            print(f"proposal pr error: {exc}", file=sys.stderr)
+            return 1
+        result_data["pull_request"] = pull_request.to_dict()
+
     if args.json:
         _print_json(result_data)
     else:
         print(f"CodeFlow propose {args.change_name}: created proposal artifacts")
         for label, path in result.artifacts.items():
             print(f"{label}: {path}")
-        print("Next implementation step: create the plan branch and open the GitHub PR.")
+        if args.open_pr:
+            print(f"pull_request: {result_data['pull_request']['url']}")
+        else:
+            print("Next implementation step: create the plan branch and open the GitHub PR.")
     return 0
 
 
@@ -269,6 +282,7 @@ def build_parser() -> argparse.ArgumentParser:
     propose.add_argument("change_name")
     propose.add_argument("request", nargs="*", help="Change request text")
     propose.add_argument("--overwrite", action="store_true", help="Overwrite existing proposal artifacts")
+    propose.add_argument("--open-pr", action="store_true", help="Create branch, commit artifacts, push, and open PR")
     propose.add_argument("--json", action="store_true", help="Print machine-readable proposal artifact output")
     propose.set_defaults(func=command_propose)
 

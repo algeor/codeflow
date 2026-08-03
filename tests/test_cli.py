@@ -198,6 +198,38 @@ agent:
         self.assertTrue(proposal_exists)
         self.assertTrue(proposal_json_exists)
 
+    def test_propose_open_pr_includes_pull_request_output(self) -> None:
+        class StubPullRequest:
+            def to_dict(self):
+                return {"branch": "plan/readme-documentation-plan", "url": "https://github.com/algeor/codeflow/pull/2"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                with patch("CodeFlow.cli.load_project_config", lambda path=None: {"github": {}}), patch(
+                    "CodeFlow.cli.create_plan_pull_request", lambda proposal, config: StubPullRequest()
+                ):
+                    exit_code, stdout, stderr = self.run_main(
+                        [
+                            "propose",
+                            "readme-documentation-plan",
+                            "Enhance",
+                            "README",
+                            "documentation.",
+                            "--open-pr",
+                            "--json",
+                        ]
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["pull_request"]["branch"], "plan/readme-documentation-plan")
+        self.assertEqual(output["pull_request"]["url"], "https://github.com/algeor/codeflow/pull/2")
+
     def test_run_claude_requires_dry_run_for_now(self) -> None:
         exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])
 

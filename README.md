@@ -21,6 +21,7 @@ Implemented commands:
 ```bash
 python -m CodeFlow doctor --json
 python -m CodeFlow propose <change-name> "request text" --json
+python -m CodeFlow propose <change-name> "request text" --open-pr --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
 ```
 
@@ -89,7 +90,7 @@ Design decisions and workflow notes live in `automation-workflow-notes.md`. That
 
 - Wire real apply mode for Claude and Codex agents.
 - Persist workflow runs and phase outputs in Postgres.
-- Create and update GitHub PRs from generated proposal artifacts.
+- Update existing GitHub PRs after proposal creation.
 - Commit after each successfully validated logical step.
 - Run role-based code, security, and test-quality reviews.
 - Track token usage and budget consumption per phase and workflow.
