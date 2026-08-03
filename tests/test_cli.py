@@ -403,6 +403,10 @@ agent:
             def is_available(self) -> bool:
                 return True
 
+        class StubCommitResult:
+            def to_dict(self):
+                return {"branch": "plan/budget-guard", "commit": "abc123", "files_committed": ["CodeFlow/budget.py"]}
+
         class StubClaudePhaseAgent:
             instances: list["StubClaudePhaseAgent"] = []
 
@@ -441,9 +445,16 @@ agent:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             work_dir = Path(tmpdir) / "run"
+            commit_calls = []
             with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
                 "CodeFlow.cli.fetch_pull_request", lambda pr_number, config: pr_data
-            ), patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent):
+            ), patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent), patch(
+                "CodeFlow.cli.commit_and_push_validated_step",
+                lambda code_creation, validation, pull_request: commit_calls.append(
+                    (code_creation, validation, pull_request)
+                )
+                or StubCommitResult(),
+            ):
                 exit_code, stdout, stderr = self.run_main(
                     [
                         "run",
@@ -464,6 +475,11 @@ agent:
         self.assertTrue(result["safe_to_commit"])
         self.assertEqual(result["approval"]["approved_by"], ["reviewer-one"])
         self.assertEqual(result["pull_request"]["number"], 2)
+        self.assertEqual(result["commit"]["commit"], "abc123")
+        self.assertEqual(len(commit_calls), 1)
+        self.assertEqual(commit_calls[0][0]["logical_step"], "budget-guard")
+        self.assertTrue(commit_calls[0][1]["safe_to_commit"])
+        self.assertEqual(commit_calls[0][2]["head_ref"], "plan/budget-guard")
         agent = StubClaudePhaseAgent.instances[0]
         self.assertFalse(agent.contexts["init"]["dry_run"])
         self.assertTrue(agent.contexts["init"]["implementation_allowed"])

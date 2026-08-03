@@ -20,6 +20,7 @@ from .config import (
     resolve_config_path,
     workflow_requires_human_approval,
 )
+from .git_workflow import GitWorkflowError, commit_and_push_validated_step
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
 from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request
@@ -248,6 +249,24 @@ def command_run(args: argparse.Namespace) -> int:
     if approval_context:
         result_data["approval"] = approval_context["approval"]
         result_data["pull_request"] = approval_context["pull_request"]
+    if approval_context and result.status == "completed" and result.safe_to_commit:
+        try:
+            commit_result = commit_and_push_validated_step(
+                result.phase_results["code_creation"],
+                result.phase_results["validation"],
+                approval_context["pull_request"],
+            )
+        except GitWorkflowError as exc:
+            result_data["status"] = "blocked"
+            result_data["stopped_at"] = "commit_push"
+            result_data["reason"] = str(exc)
+            if args.json:
+                _print_json(result_data)
+            else:
+                print(f"CodeFlow run {args.change_name}: blocked during commit/push")
+                print(f"reason: {exc}")
+            return 1
+        result_data["commit"] = commit_result.to_dict()
 
     if args.json:
         _print_json(result_data)

@@ -14,7 +14,7 @@ CodeFlow is a local automation scaffold for running an approved pull-request wor
 
 ## Current Status
 
-This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, and a dry-run workflow runner are present. The full production runner, PR lifecycle automation, durable Postgres execution, and real apply mode are still being built.
+This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, proposal PR creation, approval-gated implementation start, and validated commit/push step are present. Durable Postgres execution, multi-step implementation orchestration, and review/fix automation are still being built.
 
 Implemented commands:
 
@@ -24,6 +24,7 @@ python -m CodeFlow propose <change-name> "request text" --json
 python -m CodeFlow propose <change-name> "request text" --open-pr --json
 python -m CodeFlow status <change-name> --pr-number <number> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
+python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
 ```
 
 Scaffolded commands:
@@ -91,7 +92,7 @@ Design decisions and workflow notes live in `automation-workflow-notes.md`. That
 - Wire real apply mode for Claude and Codex agents.
 - Persist workflow runs and phase outputs in Postgres.
 - Update existing GitHub PRs after proposal creation.
-- Commit after each successfully validated logical step.
+- Extend the validated commit/push path across the full multi-step implementation loop.
 - Run role-based code, security, and test-quality reviews.
 - Track token usage and budget consumption per phase and workflow.
 - Add RAG indexing so agents do not reread the full repository every iteration.
