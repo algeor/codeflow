@@ -20,6 +20,8 @@ from .config import (
     resolve_config_path,
     workflow_requires_human_approval,
 )
+from .db.connection import DatabaseError, connect_database
+from .db.review_persistence import persist_review_result
 from .git_workflow import GitWorkflowError, commit_and_push_validated_step
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
@@ -433,7 +435,7 @@ def command_review_run(args: argparse.Namespace) -> int:
             work_dir=Path(args.work_dir) if args.work_dir else Path(".CodeFlow/runs") / args.change_name / "reviews",
             timeout_seconds=args.timeout_seconds,
         )
-    result = run_review_plan(
+    review_result = run_review_plan(
         change_name=args.change_name,
         pull_request_number=args.pr_number,
         review_plan=review_plan,
@@ -443,7 +445,19 @@ def command_review_run(args: argparse.Namespace) -> int:
         diff_source=diff_source,
         pinned_cli=None if args.agent == "auto" else args.agent,
         agent_runner=agent_runner,
-    ).to_dict()
+    )
+    result = review_result.to_dict()
+    if args.workflow_run_id:
+        try:
+            persistence = _persist_review_run_result(
+                workflow_run_id=args.workflow_run_id,
+                result=review_result,
+                commit_sha=args.commit_sha,
+            )
+        except (DatabaseError, RuntimeError) as exc:
+            print(f"review-run persistence error: {exc}", file=sys.stderr)
+            return 1
+        result["persistence"] = persistence.to_dict()
     if args.json:
         _print_json(result)
     else:
@@ -467,6 +481,25 @@ def _review_diff(args: argparse.Namespace, config: dict[str, Any]) -> tuple[str 
     if args.pr_number is not None:
         return fetch_pull_request_diff(args.pr_number, config=config), "github_pr"
     return None, "unavailable"
+
+
+def _persist_review_run_result(*, workflow_run_id: str, result: Any, commit_sha: str | None) -> Any:
+    connection = connect_database()
+    try:
+        persistence = persist_review_result(connection, workflow_run_id=workflow_run_id, result=result, commit_sha=commit_sha)
+        commit = getattr(connection, "commit", None)
+        if callable(commit):
+            commit()
+        return persistence
+    except Exception:
+        rollback = getattr(connection, "rollback", None)
+        if callable(rollback):
+            rollback()
+        raise
+    finally:
+        close = getattr(connection, "close", None)
+        if callable(close):
+            close()
 
 
 def command_resume(args: argparse.Namespace) -> int:
@@ -533,6 +566,8 @@ def build_parser() -> argparse.ArgumentParser:
     review_run.add_argument("--real-agent", action="store_true", help="Invoke Claude/Codex CLI review agents instead of fake local findings only")
     review_run.add_argument("--work-dir", help="Directory for generated review prompts and outputs")
     review_run.add_argument("--timeout-seconds", type=int, default=600, help="Per-review-task agent timeout")
+    review_run.add_argument("--workflow-run-id", help="Persist review runs and findings to this workflow_runs.id")
+    review_run.add_argument("--commit-sha", help="Commit SHA reviewed by this review run")
     review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
     review_run.set_defaults(func=command_review_run)
 

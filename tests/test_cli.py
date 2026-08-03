@@ -492,6 +492,67 @@ review:
         self.assertEqual(output["blocking_findings_count"], 1)
         self.assertEqual(output["findings"][0]["recommendation"], "Add a test that fails on the wrong behavior.")
 
+    def test_review_run_persists_when_workflow_run_id_is_provided(self) -> None:
+        class FakeQueryResult:
+            def __init__(self, row_id: str) -> None:
+                self.row_id = row_id
+
+            def fetchone(self) -> tuple[str]:
+                return (self.row_id,)
+
+        class FakeConnection:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, tuple[object, ...]]] = []
+                self.committed = False
+                self.closed = False
+
+            def execute(self, sql: str, params: tuple[object, ...]) -> FakeQueryResult:
+                self.calls.append((sql, params))
+                return FakeQueryResult(f"row-{len(self.calls)}")
+
+            def commit(self) -> None:
+                self.committed = True
+
+            def rollback(self) -> None:
+                raise AssertionError("rollback should not be called")
+
+            def close(self) -> None:
+                self.closed = True
+
+        config = {"agent": {"default_cli": "claude"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+        connection = FakeConnection()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            finding_file = Path(tmpdir) / "findings.json"
+            finding_file.write_text(json.dumps({"findings": [{"severity": "low", "summary": "nit", "review_task": "code_review"}]}))
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+                "CodeFlow.cli.connect_database", lambda: connection
+            ):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-run",
+                        "readme-plan",
+                        "--file",
+                        "README.md",
+                        "--finding-file",
+                        str(finding_file),
+                        "--workflow-run-id",
+                        "00000000-0000-0000-0000-000000000001",
+                        "--commit-sha",
+                        "abc123",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertTrue(connection.committed)
+        self.assertTrue(connection.closed)
+        output = json.loads(stdout)
+        self.assertEqual(output["persistence"]["review_runs_count"], 2)
+        self.assertEqual(output["persistence"]["review_findings_count"], 1)
+
     def test_review_run_requires_pr_number_or_file(self) -> None:
         with patch("CodeFlow.cli.load_project_config", lambda path=None: {}):
             exit_code, _, stderr = self.run_main(["review-run", "readme-plan"])

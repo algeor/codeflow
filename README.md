@@ -98,6 +98,12 @@ Real local review agents are opt-in:
 python -m CodeFlow review-run demo-change --pr-number 12 --agent auto --real-agent --json
 ```
 
+Review runs can persist to Postgres when a workflow run already exists:
+
+```bash
+python -m CodeFlow review-run demo-change --pr-number 12 --workflow-run-id <uuid> --commit-sha <sha> --json
+```
+
 ## Project Notes
 
 Design decisions and workflow notes live in `automation-workflow-notes.md`. That file is the working design log for the local approved-PR automation system.
