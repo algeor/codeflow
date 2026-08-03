@@ -338,6 +338,70 @@ review:
         self.assertEqual(exit_code, 1)
         self.assertIn("requires --pr-number or at least one --file", stderr)
 
+    def test_review_run_passes_with_no_fake_findings(self) -> None:
+        config = {"agent": {"default_cli": "claude"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: config):
+            exit_code, stdout, stderr = self.run_main(
+                ["review-run", "readme-plan", "--file", "README.md", "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["status"], "passed")
+        self.assertEqual(output["findings_count"], 0)
+        self.assertFalse(output["real_agent_review"])
+
+    def test_review_run_returns_blocking_status_for_fake_finding_file(self) -> None:
+        config = {"agent": {"default_cli": "codex"}, "review": {"roles": {"backend": {"patterns": ["**/*.py"]}}}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            finding_file = Path(tmpdir) / "findings.json"
+            finding_file.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "severity": "medium",
+                                "file_path": "CodeFlow/cli.py",
+                                "line": 12,
+                                "summary": "Missing behavior assertion.",
+                                "recommendation": "Add a test that fails on the wrong behavior.",
+                                "review_task": "test_quality_review",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-run",
+                        "cli-change",
+                        "--file",
+                        "CodeFlow/cli.py",
+                        "--finding-file",
+                        str(finding_file),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["status"], "blocked")
+        self.assertEqual(output["blocking_findings_count"], 1)
+        self.assertEqual(output["findings"][0]["recommendation"], "Add a test that fails on the wrong behavior.")
+
+    def test_review_run_requires_pr_number_or_file(self) -> None:
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: {}):
+            exit_code, _, stderr = self.run_main(["review-run", "readme-plan"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("review-run requires --pr-number or at least one --file", stderr)
+
     def test_run_real_implementation_requires_pr_number(self) -> None:
         config = """
 agent:

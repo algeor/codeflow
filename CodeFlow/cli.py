@@ -24,6 +24,7 @@ from .git_workflow import GitWorkflowError, commit_and_push_validated_step
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
 from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request, fetch_pull_request_changed_files
+from .review_runner import ReviewRunError, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
@@ -390,7 +391,7 @@ def command_status(args: argparse.Namespace) -> int:
 def command_review_plan(args: argparse.Namespace) -> int:
     try:
         config = load_project_config(args.config)
-        changed_files = _review_plan_changed_files(args, config)
+        changed_files = _review_changed_files(args, config, "review-plan")
     except (ConfigError, PullRequestError) as exc:
         print(f"review-plan error: {exc}", file=sys.stderr)
         return 1
@@ -409,11 +410,38 @@ def command_review_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def _review_plan_changed_files(args: argparse.Namespace, config: dict[str, Any]) -> list[str]:
+def command_review_run(args: argparse.Namespace) -> int:
+    try:
+        config = load_project_config(args.config)
+        changed_files = _review_changed_files(args, config, "review-run")
+        raw_findings = load_review_finding_file(args.finding_file) if args.finding_file else []
+    except (ConfigError, PullRequestError, ReviewRunError) as exc:
+        print(f"review-run error: {exc}", file=sys.stderr)
+        return 1
+
+    review_plan = detect_review_plan(changed_files, config)
+    result = run_review_plan(
+        change_name=args.change_name,
+        pull_request_number=args.pr_number,
+        review_plan=review_plan,
+        config=config,
+        raw_findings=raw_findings,
+        pinned_cli=None if args.agent == "auto" else args.agent,
+    ).to_dict()
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"CodeFlow review-run {args.change_name}: {result['status']}")
+        print(f"findings: {result['findings_count']} total, {result['blocking_findings_count']} blocking")
+        print(f"review_backend: {result['review_backend']}")
+    return 0 if result["status"] in {"passed", "skipped"} else 1
+
+
+def _review_changed_files(args: argparse.Namespace, config: dict[str, Any], command_name: str) -> list[str]:
     if args.files:
         return list(args.files)
     if args.pr_number is None:
-        raise PullRequestError("review-plan requires --pr-number or at least one --file")
+        raise PullRequestError(f"{command_name} requires --pr-number or at least one --file")
     return fetch_pull_request_changed_files(args.pr_number, config=config)
 
 
@@ -470,6 +498,15 @@ def build_parser() -> argparse.ArgumentParser:
     review_plan.add_argument("--file", dest="files", action="append", default=[], help="Changed file path to classify")
     review_plan.add_argument("--json", action="store_true", help="Print machine-readable review plan output")
     review_plan.set_defaults(func=command_review_plan)
+
+    review_run = subparsers.add_parser("review-run", help="Run local review tasks for a PR or file list")
+    review_run.add_argument("change_name")
+    review_run.add_argument("--pr-number", type=int, help="GitHub PR number to inspect")
+    review_run.add_argument("--file", dest="files", action="append", default=[], help="Changed file path to review")
+    review_run.add_argument("--agent", choices=["auto", "claude", "codex"], default="auto", help="Agent CLI to route review tasks to")
+    review_run.add_argument("--finding-file", help="Fake review findings JSON file for local harness tests")
+    review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
+    review_run.set_defaults(func=command_review_run)
 
     resume = subparsers.add_parser("resume", help="Resume an interrupted workflow")
     resume.add_argument("change_name")
