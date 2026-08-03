@@ -974,6 +974,64 @@ agent:
         self.assertTrue(agent.contexts["init"]["implementation_allowed"])
         self.assertEqual(agent.contexts["init"]["pull_request"]["number"], 2)
 
+    def test_workflow_loop_runs_fix_iteration_until_ready(self) -> None:
+        implementation_calls = []
+        review_calls = []
+        implementation_results = [
+            {"status": "completed", "safe_to_commit": True, "token_usage": {"total": {"input_tokens": 3}}},
+            {"status": "completed", "safe_to_commit": True, "token_usage": {"total": {"input_tokens": 5}}},
+        ]
+        review_results = [
+            {"status": "blocked", "findings": [{"blocking": True, "summary": "bug"}], "blocking_findings_count": 1},
+            {"status": "passed", "findings": [], "blocking_findings_count": 0},
+        ]
+
+        def fake_implementation(args, config):
+            implementation_calls.append(args)
+            return implementation_results.pop(0)
+
+        def fake_review(args, config, *, command_name):
+            review_calls.append((args, command_name))
+            return review_results.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_dir = Path(tmpdir) / "loop"
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: {"agent": {"default_cli": "claude"}}), patch(
+                "CodeFlow.cli._execute_implementation_workflow", fake_implementation
+            ), patch("CodeFlow.cli._execute_review_run", fake_review):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "workflow-loop",
+                        "review-fix",
+                        "--agent",
+                        "claude",
+                        "--dry-run",
+                        "--file",
+                        "CodeFlow/cli.py",
+                        "--max-iterations",
+                        "2",
+                        "--work-dir",
+                        str(work_dir),
+                        "--json",
+                    ]
+                )
+
+            first_review_file = work_dir / "review-results" / "review-iteration-0.json"
+            first_review_file_exists = first_review_file.exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["status"], "ready")
+        self.assertEqual(output["iterations_count"], 2)
+        self.assertEqual(output["token_usage"]["total"], {"input_tokens": 8})
+        self.assertEqual([call.fix_iteration for call in implementation_calls], [0, 1])
+        self.assertIsNone(implementation_calls[0].review_result_file)
+        self.assertEqual(implementation_calls[1].review_result_file, str(first_review_file))
+        self.assertTrue(first_review_file_exists)
+        self.assertEqual([command_name for _, command_name in review_calls], ["workflow-loop", "workflow-loop"])
+        self.assertEqual(review_calls[0][0].files, ["CodeFlow/cli.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

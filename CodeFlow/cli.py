@@ -36,6 +36,7 @@ from .review_gate import configured_max_iterations, decide_review_loop
 from .review_runner import CliReviewAgent, ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
+from .workflow_loop import GateRequest, ImplementationRequest, ReviewRequest, run_workflow_loop
 from .workflow_runner import ClaudePhaseAgent, CodexPhaseAgent, WorkflowRunResult, run_implementation_workflow
 
 REQUIRED_SKILLS = {
@@ -230,16 +231,40 @@ def command_run(args: argparse.Namespace) -> int:
         print("model config error: " + "; ".join(model_config_errors), file=sys.stderr)
         return 1
 
+    try:
+        result_data = _execute_implementation_workflow(args, config)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"run context error: {exc}", file=sys.stderr)
+        return 1
+
+    if _blocked_before_implementation(result_data):
+        if args.json:
+            _print_json(result_data)
+        else:
+            print(f"CodeFlow run {args.change_name}: blocked before implementation")
+            print(f"blocking_reason: {result_data['approval'].get('blocking_reason')}")
+        return 1
+
+    if args.json:
+        _print_json(result_data)
+    else:
+        print(f"CodeFlow run {args.change_name}: {result_data.get('status')}")
+        print(f"phases: {', '.join(result_data.get('phase_order', []))}")
+        print(f"safe_to_commit: {str(result_data.get('safe_to_commit', False)).lower()}")
+        if result_data.get("stopped_at"):
+            print(f"stopped_at: {result_data['stopped_at']}")
+        if result_data.get("reason"):
+            print(f"reason: {result_data['reason']}")
+
+    return 0 if _implementation_completed(result_data) else 1
+
+
+def _execute_implementation_workflow(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, Any]:
     approval_context: dict[str, Any] = {}
     if not args.dry_run:
         approval_result = _approved_implementation_context(args, config)
         if not approval_result["implementation_allowed"]:
-            if args.json:
-                _print_json(approval_result)
-            else:
-                print(f"CodeFlow run {args.change_name}: blocked before implementation")
-                print(f"blocking_reason: {approval_result['approval'].get('blocking_reason')}")
-            return 1
+            return approval_result
         approval_context = approval_result
 
     phase_agent_class = ClaudePhaseAgent if args.agent == "claude" else CodexPhaseAgent
@@ -249,15 +274,14 @@ def command_run(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout_seconds,
     )
     if not agent.adapter.is_available():
-        print(f"{args.agent} CLI is not available on PATH", file=sys.stderr)
-        return 1
+        return {
+            "status": "blocked",
+            "safe_to_commit": False,
+            "stopped_at": "agent_cli",
+            "reason": f"{args.agent} CLI is not available on PATH",
+        }
 
-    try:
-        initial_context = _run_initial_context(args)
-    except (OSError, json.JSONDecodeError, ValueError) as exc:
-        print(f"run context error: {exc}", file=sys.stderr)
-        return 1
-
+    initial_context = _run_initial_context(args)
     result = run_implementation_workflow(agent, initial_context={**initial_context, **approval_context})
     result_data = _workflow_result_to_dict(result)
     if approval_context:
@@ -274,26 +298,17 @@ def command_run(args: argparse.Namespace) -> int:
             result_data["status"] = "blocked"
             result_data["stopped_at"] = "commit_push"
             result_data["reason"] = str(exc)
-            if args.json:
-                _print_json(result_data)
-            else:
-                print(f"CodeFlow run {args.change_name}: blocked during commit/push")
-                print(f"reason: {exc}")
-            return 1
+            return result_data
         result_data["commit"] = commit_result.to_dict()
+    return result_data
 
-    if args.json:
-        _print_json(result_data)
-    else:
-        print(f"CodeFlow run {args.change_name}: {result.status}")
-        print(f"phases: {', '.join(result.phase_order)}")
-        print(f"safe_to_commit: {str(result.safe_to_commit).lower()}")
-        if result.stopped_at:
-            print(f"stopped_at: {result.stopped_at}")
-        if result.reason:
-            print(f"reason: {result.reason}")
 
-    return 0 if result.status == "completed" and result.safe_to_commit else 1
+def _blocked_before_implementation(result_data: dict[str, Any]) -> bool:
+    return result_data.get("implementation_allowed") is False and "phase_results" not in result_data
+
+
+def _implementation_completed(result_data: dict[str, Any]) -> bool:
+    return result_data.get("status") == "completed" and bool(result_data.get("safe_to_commit"))
 
 
 def _approved_implementation_context(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, Any]:
@@ -453,12 +468,24 @@ def command_review_plan(args: argparse.Namespace) -> int:
 def command_review_run(args: argparse.Namespace) -> int:
     try:
         config = load_project_config(args.config)
-        changed_files = _review_changed_files(args, config, "review-run")
-        diff_text, diff_source = _review_diff(args, config)
-        raw_findings = load_review_finding_file(args.finding_file) if args.finding_file else []
+        result = _execute_review_run(args, config, command_name="review-run")
     except (ConfigError, PullRequestError, ReviewRunError) as exc:
         print(f"review-run error: {exc}", file=sys.stderr)
         return 1
+
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"CodeFlow review-run {args.change_name}: {result['status']}")
+        print(f"findings: {result['findings_count']} total, {result['blocking_findings_count']} blocking")
+        print(f"review_backend: {result['review_backend']}")
+    return 0 if result["status"] in {"passed", "skipped"} else 1
+
+
+def _execute_review_run(args: argparse.Namespace, config: dict[str, Any], *, command_name: str) -> dict[str, Any]:
+    changed_files = _review_changed_files(args, config, command_name)
+    diff_text, diff_source = _review_diff(args, config)
+    raw_findings = load_review_finding_file(args.finding_file) if args.finding_file else []
 
     review_plan = detect_review_plan(changed_files, config)
     agent_runner = None
@@ -487,22 +514,14 @@ def command_review_run(args: argparse.Namespace) -> int:
                 commit_sha=args.commit_sha,
             )
         except (DatabaseError, RuntimeError) as exc:
-            print(f"review-run persistence error: {exc}", file=sys.stderr)
-            return 1
+            raise ReviewRunError(f"persistence error: {exc}") from exc
         result["persistence"] = persistence.to_dict()
     if args.output_file:
         try:
             _write_json_file(args.output_file, result)
         except OSError as exc:
-            print(f"review-run output error: {exc}", file=sys.stderr)
-            return 1
-    if args.json:
-        _print_json(result)
-    else:
-        print(f"CodeFlow review-run {args.change_name}: {result['status']}")
-        print(f"findings: {result['findings_count']} total, {result['blocking_findings_count']} blocking")
-        print(f"review_backend: {result['review_backend']}")
-    return 0 if result["status"] in {"passed", "skipped"} else 1
+            raise ReviewRunError(f"output error: {exc}") from exc
+    return result
 
 
 def command_review_gate(args: argparse.Namespace) -> int:
@@ -523,6 +542,94 @@ def command_review_gate(args: argparse.Namespace) -> int:
         print(f"next_action: {decision['next_action']}")
         print(f"blocking_findings: {decision['blocking_findings_count']}")
     return 0 if decision["status"] in {"ready", "fix_required"} else 1
+
+
+def command_workflow_loop(args: argparse.Namespace) -> int:
+    try:
+        config = load_project_config(args.config)
+    except ConfigError as exc:
+        print(f"config error: {exc}", file=sys.stderr)
+        return 1
+
+    model_config_errors = validate_model_config(config)
+    if model_config_errors:
+        print("model config error: " + "; ".join(model_config_errors), file=sys.stderr)
+        return 1
+
+    max_iterations = args.max_iterations or configured_max_iterations(config)
+    base_work_dir = Path(args.work_dir) if args.work_dir else Path(".CodeFlow/runs") / args.change_name / "workflow-loop"
+    review_results_dir = base_work_dir / "review-results"
+
+    def implementation_runner(request: ImplementationRequest) -> dict[str, Any]:
+        implementation_args = argparse.Namespace(
+            change_name=args.change_name,
+            agent=args.agent,
+            dry_run=args.dry_run,
+            work_dir=str(base_work_dir / f"implementation-{request.fix_iteration}"),
+            timeout_seconds=args.timeout_seconds,
+            pr_number=args.pr_number,
+            review_result_file=request.review_result_file,
+            fix_iteration=request.fix_iteration,
+        )
+        return _execute_implementation_workflow(implementation_args, config)
+
+    def review_runner(request: ReviewRequest) -> dict[str, Any]:
+        review_args = argparse.Namespace(
+            change_name=args.change_name,
+            pr_number=args.pr_number,
+            files=list(args.files),
+            agent=args.review_agent,
+            diff_file=args.diff_file,
+            finding_file=args.finding_file,
+            real_agent=args.real_review_agent,
+            work_dir=str(base_work_dir / f"review-{request.fix_iteration}"),
+            timeout_seconds=args.timeout_seconds,
+            workflow_run_id=args.workflow_run_id,
+            commit_sha=_implementation_commit_sha(request.implementation_result),
+            output_file=str(request.output_file),
+        )
+        return _execute_review_run(review_args, config, command_name="workflow-loop")
+
+    def gate_runner(request: GateRequest) -> dict[str, Any]:
+        decision = decide_review_loop(
+            request.review_result,
+            iteration=request.fix_iteration,
+            max_iterations=max_iterations,
+        ).to_dict()
+        decision["change_name"] = args.change_name
+        return decision
+
+    try:
+        loop_result = run_workflow_loop(
+            change_name=args.change_name,
+            pr_number=args.pr_number,
+            max_iterations=max_iterations,
+            review_results_dir=review_results_dir,
+            implementation_runner=implementation_runner,
+            review_runner=review_runner,
+            gate_runner=gate_runner,
+        )
+    except (OSError, json.JSONDecodeError, ValueError, PullRequestError, ReviewRunError) as exc:
+        print(f"workflow-loop error: {exc}", file=sys.stderr)
+        return 1
+
+    result = loop_result.to_dict()
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"CodeFlow workflow-loop {args.change_name}: {result['status']}")
+        print(f"iterations: {result['iterations_count']}")
+        if result.get("reason"):
+            print(f"reason: {result['reason']}")
+        print(f"review_results_dir: {result['artifacts']['review_results_dir']}")
+    return 0 if loop_result.status == "ready" else 1
+
+
+def _implementation_commit_sha(result: dict[str, Any]) -> str | None:
+    commit = result.get("commit")
+    if isinstance(commit, dict) and commit.get("commit"):
+        return str(commit["commit"])
+    return None
 
 
 def _review_changed_files(args: argparse.Namespace, config: dict[str, Any], command_name: str) -> list[str]:
@@ -652,6 +759,28 @@ def build_parser() -> argparse.ArgumentParser:
     review_gate.add_argument("--max-iterations", type=int, help="Maximum allowed fix iterations")
     review_gate.add_argument("--json", action="store_true", help="Print machine-readable review gate output")
     review_gate.set_defaults(func=command_review_gate)
+
+    workflow_loop = subparsers.add_parser("workflow-loop", help="Run approved implementation, review, and fix iterations")
+    workflow_loop.add_argument("change_name")
+    workflow_loop.add_argument("--pr-number", type=int, help="Approved GitHub PR number required for non-dry-run implementation")
+    workflow_loop.add_argument("--agent", choices=["claude", "codex"], required=True, help="Agent backend to invoke for implementation")
+    workflow_loop.add_argument(
+        "--review-agent",
+        choices=["auto", "claude", "codex"],
+        default="auto",
+        help="Agent CLI to route review tasks to",
+    )
+    workflow_loop.add_argument("--real-review-agent", action="store_true", help="Invoke Claude/Codex CLI review agents")
+    workflow_loop.add_argument("--dry-run", action="store_true", help="Run implementation phases in no-mutation smoke mode")
+    workflow_loop.add_argument("--file", dest="files", action="append", default=[], help="Changed file path to review")
+    workflow_loop.add_argument("--diff-file", help="Fake PR diff text file for local harness tests")
+    workflow_loop.add_argument("--finding-file", help="Fake review findings JSON file for local harness tests")
+    workflow_loop.add_argument("--max-iterations", type=int, help="Maximum allowed fix iterations")
+    workflow_loop.add_argument("--work-dir", help="Directory for generated prompts, outputs, and review JSON")
+    workflow_loop.add_argument("--timeout-seconds", type=int, default=600, help="Per-phase and per-review-task agent timeout")
+    workflow_loop.add_argument("--workflow-run-id", help="Persist review runs and findings to this workflow_runs.id")
+    workflow_loop.add_argument("--json", action="store_true", help="Print machine-readable workflow loop output")
+    workflow_loop.set_defaults(func=command_workflow_loop)
 
     resume = subparsers.add_parser("resume", help="Resume an interrupted workflow")
     resume.add_argument("change_name")

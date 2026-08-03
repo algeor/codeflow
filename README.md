@@ -14,7 +14,7 @@ CodeFlow is a local automation scaffold for running an approved pull-request wor
 
 ## Current Status
 
-This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, proposal PR creation, approval-gated implementation start, validated commit/push step, review role detection, fakeable review-run JSON contract, and workflow token-usage summaries are present. Durable Postgres execution, full multi-step implementation orchestration, and review/fix automation are still being built.
+This repository is an MVP scaffold. The core CLI, model router, local prompt skills, migration skeleton, proposal PR creation, approval-gated implementation start, validated commit/push step, review role detection, fakeable review-run JSON contract, workflow token-usage summaries, and the implementation/review/fix loop command are present. Durable Postgres execution beyond review persistence, real RAG, and PR question/comment automation are still being built.
 
 Implemented commands:
 
@@ -30,6 +30,7 @@ python -m CodeFlow run <change-name> --agent claude --dry-run --json
 python -m CodeFlow run <change-name> --agent codex --dry-run --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --review-result-file <path> --fix-iteration <n> --json
+python -m CodeFlow workflow-loop <change-name> --agent claude --pr-number <number> --json
 ```
 
 Scaffolded commands:
@@ -119,16 +120,26 @@ Fix iterations feed blocking review findings back into implementation:
 python -m CodeFlow run demo-change --agent claude --pr-number 12 --review-result-file /tmp/review-result.json --fix-iteration 1 --json
 ```
 
+The MVP loop runs implementation, review, gate, and fix iterations until the review gate is ready, failed, or escalated:
+
+```bash
+python -m CodeFlow workflow-loop demo-change --agent claude --pr-number 12 --review-agent auto --real-review-agent --max-iterations 3 --json
+```
+
+The same loop has a local fake harness for fast testing without GitHub approval or real agent review:
+
+```bash
+python -m CodeFlow workflow-loop demo-change --agent claude --dry-run --file CodeFlow/cli.py --max-iterations 1 --json
+```
+
 ## Project Notes
 
 Design decisions and workflow notes live in `automation-workflow-notes.md`. That file is the working design log for the local approved-PR automation system.
 
 ## Roadmap
 
-- Wire real apply mode for Claude and Codex agents.
 - Persist workflow runs and phase outputs in Postgres.
 - Update existing GitHub PRs after proposal creation.
-- Extend the validated commit/push path across the full multi-step implementation loop.
 - Run real role-based code, security, and test-quality reviews through Claude or Codex CLI.
 - Persist token usage and budget consumption per phase and workflow.
 - Add RAG indexing so agents do not reread the full repository every iteration.
