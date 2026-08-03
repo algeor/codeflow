@@ -81,9 +81,11 @@ class CliPhaseAgent:
             return failed_phase_result(phase, f"{self.adapter.provider_cli} CLI {result.status}: {result.stderr}".strip())
 
         try:
-            return parse_phase_output(result.output_path.read_text())
+            phase_result = parse_phase_output(result.output_path.read_text())
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             return failed_phase_result(phase, f"could not parse {phase.phase_id} JSON result: {exc}")
+        phase_result["agent_invocation"] = _agent_invocation_summary(result, request)
+        return phase_result
 
 
 class ClaudePhaseAgent(CliPhaseAgent):
@@ -189,6 +191,22 @@ def failed_phase_result(phase: WorkflowPhase, reason: str) -> dict[str, Any]:
     if phase.phase_id == "validation":
         return {"status": "failed", "reason": reason, "safe_to_commit": False, "blocking_failures": [reason]}
     return {"status": "failed", "reason": reason}
+
+
+def _agent_invocation_summary(result: Any, request: AgentRequest) -> dict[str, Any]:
+    metadata = request.metadata
+    summary = {
+        "provider_cli": result.provider_cli,
+        "model": result.model,
+        "status": result.status,
+        "return_code": result.return_code,
+        "duration_ms": result.duration_ms,
+        "task_type": request.task_type,
+        "model_tier": metadata.get("model_tier"),
+        "routing_reason": metadata.get("route_reason"),
+        "token_usage": result.metadata.get("token_usage", {}),
+    }
+    return {key: value for key, value in summary.items() if value is not None}
 
 
 def _loads_json_object(raw: str) -> dict[str, Any] | None:

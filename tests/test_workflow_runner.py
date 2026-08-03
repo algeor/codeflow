@@ -73,6 +73,7 @@ class ScriptedClaudeAdapter(CliAgentAdapter):
             status="succeeded",
             return_code=0,
             output_path=request.output_path,
+            metadata={"token_usage": {"input_tokens": 10, "output_tokens": 4}},
         )
 
 
@@ -181,6 +182,11 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertTrue(result.safe_to_commit)
         self.assertEqual([request.model for request in adapter.requests], ["sonnet", "sonnet", "haiku"])
         self.assertEqual([request.task_type for request in adapter.requests], [phase.task_type for phase in IMPLEMENTATION_PHASES])
+        self.assertEqual(
+            result.phase_results["init"]["agent_invocation"]["token_usage"],
+            {"input_tokens": 10, "output_tokens": 4},
+        )
+        self.assertEqual(result.phase_results["init"]["agent_invocation"]["provider_cli"], "claude")
 
     def test_codex_phase_agent_uses_codex_adapter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
