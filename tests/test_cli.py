@@ -166,6 +166,38 @@ agent:
         self.assertEqual(github_check["owner"], "algeor")
         self.assertEqual(github_check["repo"], "codeflow")
 
+    def test_propose_creates_artifacts_and_prints_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(tmpdir)
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "propose",
+                        "readme-documentation-plan",
+                        "Enhance",
+                        "the",
+                        "README",
+                        "documentation.",
+                        "--json",
+                    ]
+                )
+            finally:
+                os.chdir(previous_cwd)
+
+            proposal_path = Path(tmpdir) / ".CodeFlow" / "changes" / "readme-documentation-plan" / "proposal.md"
+            proposal_json_path = proposal_path.with_name("proposal.json")
+            proposal_exists = proposal_path.exists()
+            proposal_json_exists = proposal_json_path.exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["change_name"], "readme-documentation-plan")
+        self.assertEqual(output["artifacts"]["proposal"], ".CodeFlow/changes/readme-documentation-plan/proposal.md")
+        self.assertTrue(proposal_exists)
+        self.assertTrue(proposal_json_exists)
+
     def test_run_claude_requires_dry_run_for_now(self) -> None:
         exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])
 

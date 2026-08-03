@@ -11,6 +11,7 @@ from . import __version__
 from .command_discovery import find_executable
 from .config import ConfigError, env_settings, github_settings, load_local_env, load_project_config, resolve_config_path
 from .model_router import validate_model_config
+from .proposal import ProposalError, create_proposal_artifacts
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
 
@@ -148,7 +149,25 @@ def _scaffold_notice(command: str, change_name: str | None = None) -> int:
 
 
 def command_propose(args: argparse.Namespace) -> int:
-    return _scaffold_notice("propose", args.change_name)
+    try:
+        result = create_proposal_artifacts(
+            args.change_name,
+            " ".join(args.request),
+            overwrite=args.overwrite,
+        )
+    except ProposalError as exc:
+        print(f"proposal error: {exc}", file=sys.stderr)
+        return 1
+
+    result_data = result.to_dict()
+    if args.json:
+        _print_json(result_data)
+    else:
+        print(f"CodeFlow propose {args.change_name}: created proposal artifacts")
+        for label, path in result.artifacts.items():
+            print(f"{label}: {path}")
+        print("Next implementation step: create the plan branch and open the GitHub PR.")
+    return 0
 
 
 def command_run(args: argparse.Namespace) -> int:
@@ -246,9 +265,11 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--json", action="store_true", help="Print machine-readable output")
     doctor.set_defaults(func=command_doctor)
 
-    propose = subparsers.add_parser("propose", help="Create plan artifacts and open a plan PR")
+    propose = subparsers.add_parser("propose", help="Create proposal artifacts for a plan PR")
     propose.add_argument("change_name")
     propose.add_argument("request", nargs="*", help="Change request text")
+    propose.add_argument("--overwrite", action="store_true", help="Overwrite existing proposal artifacts")
+    propose.add_argument("--json", action="store_true", help="Print machine-readable proposal artifact output")
     propose.set_defaults(func=command_propose)
 
     run = subparsers.add_parser("run", help="Run approved implementation workflow")
