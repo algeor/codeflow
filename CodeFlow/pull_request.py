@@ -138,6 +138,29 @@ def fetch_pull_request_changed_files(
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def fetch_pull_request_diff(
+    pr_number: int,
+    *,
+    config: dict[str, Any],
+    cwd: Path | str = Path("."),
+    runner: CommandRunner | None = None,
+) -> str:
+    settings = github_settings(config)
+    owner = settings["owner"]
+    repo = settings["repo"]
+    if not owner or not repo:
+        raise PullRequestError("GitHub owner and repo are required to read PR diff")
+
+    command = ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
+    env = github_cli_environment()
+    env["GH_HOST"] = settings["host"]
+    result = (runner or run_command)(command, env, Path(cwd))
+    if result.return_code != 0:
+        message = result.stderr.strip() or result.stdout.strip() or "gh pr diff failed"
+        raise PullRequestError(f"command failed ({' '.join(command)}): {message}")
+    return result.stdout
+
+
 def run_command(args: Sequence[str], env: dict[str, str] | None, cwd: Path) -> CommandResult:
     completed = subprocess.run(args, capture_output=True, text=True, cwd=cwd, env=env, check=False)
     return CommandResult(tuple(args), completed.returncode, completed.stdout, completed.stderr)

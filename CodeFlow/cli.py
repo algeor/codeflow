@@ -23,8 +23,14 @@ from .config import (
 from .git_workflow import GitWorkflowError, commit_and_push_validated_step
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
-from .pull_request import PullRequestError, create_plan_pull_request, fetch_pull_request, fetch_pull_request_changed_files
-from .review_runner import ReviewRunError, load_review_finding_file, run_review_plan
+from .pull_request import (
+    PullRequestError,
+    create_plan_pull_request,
+    fetch_pull_request,
+    fetch_pull_request_changed_files,
+    fetch_pull_request_diff,
+)
+from .review_runner import ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
@@ -414,6 +420,7 @@ def command_review_run(args: argparse.Namespace) -> int:
     try:
         config = load_project_config(args.config)
         changed_files = _review_changed_files(args, config, "review-run")
+        diff_text, diff_source = _review_diff(args, config)
         raw_findings = load_review_finding_file(args.finding_file) if args.finding_file else []
     except (ConfigError, PullRequestError, ReviewRunError) as exc:
         print(f"review-run error: {exc}", file=sys.stderr)
@@ -426,6 +433,8 @@ def command_review_run(args: argparse.Namespace) -> int:
         review_plan=review_plan,
         config=config,
         raw_findings=raw_findings,
+        diff_text=diff_text,
+        diff_source=diff_source,
         pinned_cli=None if args.agent == "auto" else args.agent,
     ).to_dict()
     if args.json:
@@ -443,6 +452,14 @@ def _review_changed_files(args: argparse.Namespace, config: dict[str, Any], comm
     if args.pr_number is None:
         raise PullRequestError(f"{command_name} requires --pr-number or at least one --file")
     return fetch_pull_request_changed_files(args.pr_number, config=config)
+
+
+def _review_diff(args: argparse.Namespace, config: dict[str, Any]) -> tuple[str | None, str]:
+    if args.diff_file:
+        return load_review_diff_file(args.diff_file), "file"
+    if args.pr_number is not None:
+        return fetch_pull_request_diff(args.pr_number, config=config), "github_pr"
+    return None, "unavailable"
 
 
 def command_resume(args: argparse.Namespace) -> int:
@@ -504,6 +521,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_run.add_argument("--pr-number", type=int, help="GitHub PR number to inspect")
     review_run.add_argument("--file", dest="files", action="append", default=[], help="Changed file path to review")
     review_run.add_argument("--agent", choices=["auto", "claude", "codex"], default="auto", help="Agent CLI to route review tasks to")
+    review_run.add_argument("--diff-file", help="Fake PR diff text file for local harness tests")
     review_run.add_argument("--finding-file", help="Fake review findings JSON file for local harness tests")
     review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
     review_run.set_defaults(func=command_review_run)

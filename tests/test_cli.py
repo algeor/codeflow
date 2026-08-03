@@ -352,6 +352,51 @@ review:
         self.assertEqual(output["status"], "passed")
         self.assertEqual(output["findings_count"], 0)
         self.assertFalse(output["real_agent_review"])
+        self.assertEqual(output["review_input"], {"diff_source": "unavailable", "diff_line_count": 0})
+
+    def test_review_run_loads_fake_diff_file(self) -> None:
+        config = {"agent": {"default_cli": "claude"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            diff_file = Path(tmpdir) / "pr.diff"
+            diff_file.write_text("diff --git a/README.md b/README.md\n+new line\n")
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-run",
+                        "readme-plan",
+                        "--file",
+                        "README.md",
+                        "--diff-file",
+                        str(diff_file),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["review_input"], {"diff_source": "file", "diff_line_count": 2})
+
+    def test_review_run_fetches_changed_files_and_diff_from_pr(self) -> None:
+        config = {"agent": {"default_cli": "codex"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+            "CodeFlow.cli.fetch_pull_request_changed_files", lambda pr_number, config: ["README.md"]
+        ), patch(
+            "CodeFlow.cli.fetch_pull_request_diff", lambda pr_number, config: "diff --git a/README.md b/README.md\n+docs\n"
+        ):
+            exit_code, stdout, stderr = self.run_main(
+                ["review-run", "readme-plan", "--pr-number", "2", "--json"]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["pull_request_number"], 2)
+        self.assertEqual(output["review_plan"]["changed_files"], ["README.md"])
+        self.assertEqual(output["review_input"], {"diff_source": "github_pr", "diff_line_count": 2})
 
     def test_review_run_returns_blocking_status_for_fake_finding_file(self) -> None:
         config = {"agent": {"default_cli": "codex"}, "review": {"roles": {"backend": {"patterns": ["**/*.py"]}}}}

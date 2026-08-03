@@ -13,6 +13,7 @@ from CodeFlow.pull_request import (
     create_plan_pull_request,
     fetch_pull_request,
     fetch_pull_request_changed_files,
+    fetch_pull_request_diff,
 )
 
 
@@ -118,6 +119,20 @@ class PullRequestTests(unittest.TestCase):
 
         self.assertEqual(files, ["README.md", "CodeFlow/cli.py"])
         self.assertEqual(calls[0], ["gh", "pr", "diff", "2", "--repo", "algeor/codeflow", "--name-only"])
+
+    def test_fetch_pull_request_diff_runs_gh_pr_diff_without_name_only(self) -> None:
+        calls: list[list[str]] = []
+
+        def runner(args, env, cwd):
+            calls.append(list(args))
+            return CommandResult(tuple(args), 0, "diff --git a/README.md b/README.md\n", "")
+
+        config = {"github": {"owner": "algeor", "repo": "codeflow", "base_branch": "dev"}}
+
+        diff = fetch_pull_request_diff(2, config=config, runner=runner)
+
+        self.assertEqual(diff, "diff --git a/README.md b/README.md\n")
+        self.assertEqual(calls[0], ["gh", "pr", "diff", "2", "--repo", "algeor/codeflow"])
 
 
 if __name__ == "__main__":

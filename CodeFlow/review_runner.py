@@ -66,6 +66,8 @@ class ReviewRunResult:
     review_plan: ReviewPlan
     task_runs: list[ReviewTaskRun]
     findings: list[ReviewFinding]
+    diff_source: str = "unavailable"
+    diff_text: str | None = None
     review_backend: str = "local-fake"
     real_agent_review: bool = False
 
@@ -86,6 +88,10 @@ class ReviewRunResult:
             "status": self.status,
             "review_backend": self.review_backend,
             "real_agent_review": self.real_agent_review,
+            "review_input": {
+                "diff_source": self.diff_source,
+                "diff_line_count": len((self.diff_text or "").splitlines()),
+            },
             "review_plan": self.review_plan.to_dict(),
             "task_runs": [task_run.to_dict() for task_run in self.task_runs],
             "findings": [finding.to_dict() for finding in self.findings],
@@ -101,6 +107,8 @@ def run_review_plan(
     review_plan: ReviewPlan,
     config: dict[str, Any],
     raw_findings: list[dict[str, Any]] | None = None,
+    diff_text: str | None = None,
+    diff_source: str = "unavailable",
     pinned_cli: str | None = None,
 ) -> ReviewRunResult:
     findings = normalize_findings(
@@ -115,7 +123,17 @@ def run_review_plan(
         review_plan=review_plan,
         task_runs=task_runs,
         findings=findings,
+        diff_source=diff_source,
+        diff_text=diff_text,
     )
+
+
+def load_review_diff_file(path: str | Path) -> str:
+    diff_path = Path(path)
+    try:
+        return diff_path.read_text()
+    except OSError as exc:
+        raise ReviewRunError(f"could not read diff file: {exc}") from exc
 
 
 def load_review_finding_file(path: str | Path) -> list[dict[str, Any]]:

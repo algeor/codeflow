@@ -89,7 +89,7 @@ The fake review harness accepts changed files and optional findings JSON:
 
 ```bash
 python -m CodeFlow review-run demo-change --file CodeFlow/cli.py --json
-python -m CodeFlow review-run demo-change --file CodeFlow/cli.py --finding-file /tmp/findings.json --json
+python -m CodeFlow review-run demo-change --file CodeFlow/cli.py --diff-file /tmp/pr.diff --finding-file /tmp/findings.json --json
 ```
 
 ## Project Notes
