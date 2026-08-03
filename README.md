@@ -27,6 +27,7 @@ python -m CodeFlow review-plan <change-name> --pr-number <number> --json
 python -m CodeFlow review-run <change-name> --pr-number <number> --json
 python -m CodeFlow review-gate <change-name> --review-result-file <path> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
+python -m CodeFlow run <change-name> --agent codex --dry-run --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --review-result-file <path> --fix-iteration <n> --json
 ```

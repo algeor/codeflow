@@ -827,6 +827,54 @@ agent:
         self.assertEqual(agent.contexts["init"]["review_result_status"], "blocked")
         self.assertEqual(agent.contexts["init"]["open_review_findings"], [{"blocking": True, "summary": "Fix this", "review_task": "code_review"}])
 
+    def test_run_codex_dry_run_invokes_codex_phase_agent(self) -> None:
+        class AvailableAdapter:
+            def is_available(self) -> bool:
+                return True
+
+        class StubCodexPhaseAgent:
+            instances: list["StubCodexPhaseAgent"] = []
+
+            def __init__(self, *, config, work_dir, timeout_seconds):
+                self.adapter = AvailableAdapter()
+                self.contexts = {}
+                self.instances.append(self)
+
+            def run_phase(self, phase, context):
+                self.contexts[phase.phase_id] = dict(context)
+                responses = {
+                    "init": {"status": "ready", "validation_commands": []},
+                    "code_creation": {
+                        "status": "completed",
+                        "logical_step": "codex-step",
+                        "files_changed": ["CodeFlow/cli.py"],
+                        "precommit_run": {"status": "passed"},
+                    },
+                    "validation": {"status": "passed", "safe_to_commit": True, "commands_run": []},
+                }
+                return responses[phase.phase_id]
+
+        config = """
+agent:
+  default_cli: codex
+  allowed_clis: [codex]
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(config)
+
+            with patch("CodeFlow.cli.CodexPhaseAgent", StubCodexPhaseAgent):
+                exit_code, stdout, stderr = self.run_main(
+                    ["--config", str(config_path), "run", "codex-change", "--agent", "codex", "--dry-run", "--json"]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertEqual(output["phase_order"], ["init", "code_creation", "validation"])
+        self.assertEqual(StubCodexPhaseAgent.instances[0].contexts["init"]["change_name"], "codex-change")
+
     def test_run_real_implementation_after_approved_pr_invokes_workflow(self) -> None:
         class AvailableAdapter:
             def is_available(self) -> bool:

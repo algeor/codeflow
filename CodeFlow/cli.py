@@ -36,7 +36,7 @@ from .review_gate import configured_max_iterations, decide_review_loop
 from .review_runner import CliReviewAgent, ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
-from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
+from .workflow_runner import ClaudePhaseAgent, CodexPhaseAgent, WorkflowRunResult, run_implementation_workflow
 
 REQUIRED_SKILLS = {
     "implement-init": Path(".CodeFlow/skills/implement-init/SKILL.md"),
@@ -219,10 +219,6 @@ def command_run(args: argparse.Namespace) -> int:
     if args.agent is None:
         return _scaffold_notice("run", args.change_name)
 
-    if args.agent != "claude":
-        print(f"unsupported run agent: {args.agent}", file=sys.stderr)
-        return 2
-
     try:
         config = load_project_config(args.config)
     except ConfigError as exc:
@@ -246,13 +242,14 @@ def command_run(args: argparse.Namespace) -> int:
             return 1
         approval_context = approval_result
 
-    agent = ClaudePhaseAgent(
+    phase_agent_class = ClaudePhaseAgent if args.agent == "claude" else CodexPhaseAgent
+    agent = phase_agent_class(
         config=config,
         work_dir=Path(args.work_dir) if args.work_dir else Path(".CodeFlow/runs") / args.change_name,
         timeout_seconds=args.timeout_seconds,
     )
     if not agent.adapter.is_available():
-        print("claude CLI is not available on PATH", file=sys.stderr)
+        print(f"{args.agent} CLI is not available on PATH", file=sys.stderr)
         return 1
 
     try:
@@ -587,7 +584,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subparsers.add_parser("run", help="Run approved implementation workflow")
     run.add_argument("change_name")
-    run.add_argument("--agent", choices=["claude"], help="Agent backend to invoke for the workflow")
+    run.add_argument("--agent", choices=["claude", "codex"], help="Agent backend to invoke for the workflow")
     run.add_argument(
         "--dry-run",
         action="store_true",

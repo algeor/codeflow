@@ -7,6 +7,7 @@ from typing import Any, Protocol
 
 from .adapters.base import AgentRequest, CliAgentAdapter
 from .adapters.claude_cli import ClaudeCliAdapter
+from .adapters.codex_cli import CodexCliAdapter
 from .model_router import route_task
 from .orchestration import IMPLEMENTATION_PHASES, WorkflowPhase, concise_phase_summary, phase_succeeded
 
@@ -88,6 +89,11 @@ class CliPhaseAgent:
 class ClaudePhaseAgent(CliPhaseAgent):
     def __init__(self, *, config: dict[str, Any], work_dir: Path, timeout_seconds: int = 600) -> None:
         super().__init__(ClaudeCliAdapter(), config=config, work_dir=work_dir, timeout_seconds=timeout_seconds)
+
+
+class CodexPhaseAgent(CliPhaseAgent):
+    def __init__(self, *, config: dict[str, Any], work_dir: Path, timeout_seconds: int = 600) -> None:
+        super().__init__(CodexCliAdapter(), config=config, work_dir=work_dir, timeout_seconds=timeout_seconds)
 
 
 def run_implementation_workflow(agent: PhaseAgent, *, initial_context: dict[str, Any] | None = None) -> WorkflowRunResult:

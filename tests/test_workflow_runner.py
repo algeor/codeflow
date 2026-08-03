@@ -9,6 +9,7 @@ from CodeFlow.adapters.base import AgentRequest, AgentResult, CliAgentAdapter
 from CodeFlow.orchestration import IMPLEMENTATION_PHASES
 from CodeFlow.workflow_runner import (
     CliPhaseAgent,
+    CodexPhaseAgent,
     FakePhaseAgent,
     build_phase_prompt,
     parse_phase_output,
@@ -180,6 +181,12 @@ class WorkflowRunnerTests(unittest.TestCase):
         self.assertTrue(result.safe_to_commit)
         self.assertEqual([request.model for request in adapter.requests], ["sonnet", "sonnet", "haiku"])
         self.assertEqual([request.task_type for request in adapter.requests], [phase.task_type for phase in IMPLEMENTATION_PHASES])
+
+    def test_codex_phase_agent_uses_codex_adapter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            agent = CodexPhaseAgent(config={"agent": {"default_cli": "codex"}}, work_dir=Path(tmpdir))
+
+        self.assertEqual(agent.adapter.provider_cli, "codex")
 
     def test_cli_phase_agent_prompt_points_to_skill_and_context(self) -> None:
         adapter = ScriptedClaudeAdapter({"init": json.dumps(READY_INIT)})
