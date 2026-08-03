@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from CodeFlow.cli import REQUIRED_SKILLS, main
+from CodeFlow.review_runner import ReviewAgentTaskResult
 
 
 def fake_find_executable(executable: str) -> str | None:
@@ -397,6 +398,57 @@ review:
         self.assertEqual(output["pull_request_number"], 2)
         self.assertEqual(output["review_plan"]["changed_files"], ["README.md"])
         self.assertEqual(output["review_input"], {"diff_source": "github_pr", "diff_line_count": 2})
+
+    def test_review_run_real_agent_uses_cli_review_agent(self) -> None:
+        class StubCliReviewAgent:
+            instances: list["StubCliReviewAgent"] = []
+
+            def __init__(self, *, work_dir, timeout_seconds):
+                self.work_dir = work_dir
+                self.timeout_seconds = timeout_seconds
+                self.calls: list[str] = []
+                self.instances.append(self)
+
+            def run_review_task(self, *, review_task, review_plan, diff_text, route):
+                self.calls.append(review_task)
+                return ReviewAgentTaskResult(status="succeeded", raw_findings=[])
+
+        config = {"agent": {"default_cli": "claude"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            diff_file = Path(tmpdir) / "pr.diff"
+            diff_file.write_text("diff --git a/README.md b/README.md\n")
+            work_dir = Path(tmpdir) / "reviews"
+
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+                "CodeFlow.cli.CliReviewAgent", StubCliReviewAgent
+            ):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-run",
+                        "readme-plan",
+                        "--file",
+                        "README.md",
+                        "--diff-file",
+                        str(diff_file),
+                        "--real-agent",
+                        "--work-dir",
+                        str(work_dir),
+                        "--timeout-seconds",
+                        "12",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        output = json.loads(stdout)
+        self.assertTrue(output["real_agent_review"])
+        self.assertEqual(output["review_backend"], "local-agent")
+        agent = StubCliReviewAgent.instances[0]
+        self.assertEqual(agent.work_dir, work_dir)
+        self.assertEqual(agent.timeout_seconds, 12)
+        self.assertEqual(agent.calls, ["code_review", "final_blocking_review"])
 
     def test_review_run_returns_blocking_status_for_fake_finding_file(self) -> None:
         config = {"agent": {"default_cli": "codex"}, "review": {"roles": {"backend": {"patterns": ["**/*.py"]}}}}

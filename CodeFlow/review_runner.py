@@ -3,14 +3,39 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from .model_router import route_task
+from .adapters.base import AgentRequest, CliAgentAdapter
+from .adapters.claude_cli import ClaudeCliAdapter
+from .adapters.codex_cli import CodexCliAdapter
+from .model_router import ModelRoute, route_task
 from .review_routing import ReviewPlan
 
 
 class ReviewRunError(RuntimeError):
     """Raised when review execution input cannot be normalized."""
+
+
+class ReviewAgentRunner(Protocol):
+    def run_review_task(
+        self,
+        *,
+        review_task: str,
+        review_plan: ReviewPlan,
+        diff_text: str | None,
+        route: ModelRoute,
+    ) -> "ReviewAgentTaskResult":
+        """Run one review task and return raw findings from the agent."""
+
+
+@dataclass(frozen=True)
+class ReviewAgentTaskResult:
+    status: str
+    raw_findings: list[dict[str, Any]]
+    reason: str | None = None
+    prompt_path: str | None = None
+    output_path: str | None = None
+    duration_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -45,9 +70,13 @@ class ReviewTaskRun:
     status: str
     findings_count: int
     blocking_findings_count: int
+    reason: str | None = None
+    prompt_path: str | None = None
+    output_path: str | None = None
+    duration_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "review_task": self.review_task,
             "provider_cli": self.provider_cli,
             "model_tier": self.model_tier,
@@ -57,6 +86,15 @@ class ReviewTaskRun:
             "findings_count": self.findings_count,
             "blocking_findings_count": self.blocking_findings_count,
         }
+        if self.reason:
+            data["reason"] = self.reason
+        if self.prompt_path:
+            data["prompt_path"] = self.prompt_path
+        if self.output_path:
+            data["output_path"] = self.output_path
+        if self.duration_ms is not None:
+            data["duration_ms"] = self.duration_ms
+        return data
 
 
 @dataclass(frozen=True)
@@ -77,6 +115,8 @@ class ReviewRunResult:
 
     @property
     def status(self) -> str:
+        if any(task_run.status == "failed" for task_run in self.task_runs):
+            return "failed"
         if not self.review_plan.review_tasks:
             return "skipped"
         return "blocked" if self.blocking_findings else "passed"
@@ -110,13 +150,32 @@ def run_review_plan(
     diff_text: str | None = None,
     diff_source: str = "unavailable",
     pinned_cli: str | None = None,
+    agent_runner: ReviewAgentRunner | None = None,
 ) -> ReviewRunResult:
+    agent_results: dict[str, ReviewAgentTaskResult] = {}
+    task_routes = {review_task: route_task(review_task, config, pinned_cli=pinned_cli) for review_task in review_plan.review_tasks}
+    all_raw_findings = list(raw_findings or [])
+    if agent_runner is not None:
+        for review_task, route in task_routes.items():
+            agent_result = agent_runner.run_review_task(
+                review_task=review_task,
+                review_plan=review_plan,
+                diff_text=diff_text,
+                route=route,
+            )
+            agent_results[review_task] = agent_result
+            if agent_result.status == "succeeded":
+                all_raw_findings.extend(agent_result.raw_findings)
+
     findings = normalize_findings(
-        raw_findings or [],
+        all_raw_findings,
         default_review_task=_default_review_task(review_plan),
         blocking_severities=_configured_blocking_severities(config),
     )
-    task_runs = [_task_run(review_task, config, pinned_cli, findings) for review_task in review_plan.review_tasks]
+    task_runs = [
+        _task_run(review_task, task_routes[review_task], findings, agent_results.get(review_task))
+        for review_task in review_plan.review_tasks
+    ]
     return ReviewRunResult(
         change_name=change_name,
         pull_request_number=pull_request_number,
@@ -125,7 +184,92 @@ def run_review_plan(
         findings=findings,
         diff_source=diff_source,
         diff_text=diff_text,
+        review_backend="local-agent" if agent_runner is not None else "local-fake",
+        real_agent_review=agent_runner is not None,
     )
+
+
+class CliReviewAgent:
+    def __init__(self, *, work_dir: Path, timeout_seconds: int = 600) -> None:
+        self.work_dir = Path(work_dir)
+        self.timeout_seconds = timeout_seconds
+
+    def run_review_task(
+        self,
+        *,
+        review_task: str,
+        review_plan: ReviewPlan,
+        diff_text: str | None,
+        route: ModelRoute,
+    ) -> ReviewAgentTaskResult:
+        adapter = _adapter_for_cli(route.provider_cli)
+        if not adapter.is_available():
+            return ReviewAgentTaskResult(
+                status="failed",
+                raw_findings=[],
+                reason=f"{route.provider_cli} CLI is not available on PATH",
+            )
+
+        prompt_path = self.work_dir / "prompts" / f"{review_task}.md"
+        output_path = self.work_dir / "outputs" / f"{review_task}.json"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(_build_review_prompt(review_task, review_plan, diff_text))
+
+        request = AgentRequest(
+            task_type=review_task,
+            model=route.model_id,
+            prompt_path=prompt_path,
+            output_path=output_path,
+            timeout_seconds=self.timeout_seconds,
+            expected_schema={"type": "object", "required": ["findings"]},
+            metadata={"model_tier": route.model_tier, "routing_reason": route.reason},
+        )
+        result = adapter.invoke(request)
+        if result.status != "succeeded":
+            return ReviewAgentTaskResult(
+                status="failed",
+                raw_findings=[],
+                reason=f"{route.provider_cli} CLI {result.status}: {result.stderr}".strip(),
+                prompt_path=str(prompt_path),
+                output_path=str(output_path),
+                duration_ms=result.duration_ms,
+            )
+
+        try:
+            raw_findings = parse_review_agent_output(output_path.read_text())
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return ReviewAgentTaskResult(
+                status="failed",
+                raw_findings=[],
+                reason=f"could not parse review agent output: {exc}",
+                prompt_path=str(prompt_path),
+                output_path=str(output_path),
+                duration_ms=result.duration_ms,
+            )
+        return ReviewAgentTaskResult(
+            status="succeeded",
+            raw_findings=raw_findings,
+            prompt_path=str(prompt_path),
+            output_path=str(output_path),
+            duration_ms=result.duration_ms,
+        )
+
+
+def parse_review_agent_output(raw_output: str) -> list[dict[str, Any]]:
+    parsed = _loads_review_json(raw_output.strip())
+    if parsed is None:
+        for line in reversed(raw_output.strip().splitlines()):
+            parsed = _loads_review_json(line.strip())
+            if parsed is not None:
+                break
+    if parsed is None:
+        raise ValueError("no review JSON object found")
+    if isinstance(parsed, dict) and isinstance(parsed.get("findings"), list):
+        return _ensure_object_list(parsed["findings"])
+    if isinstance(parsed, list):
+        return _ensure_object_list(parsed)
+    raise ValueError("review JSON must be a list or an object with findings")
 
 
 def load_review_diff_file(path: str | Path) -> str:
@@ -183,23 +327,85 @@ def normalize_finding(
 
 def _task_run(
     review_task: str,
-    config: dict[str, Any],
-    pinned_cli: str | None,
+    route: ModelRoute,
     findings: list[ReviewFinding],
+    agent_result: ReviewAgentTaskResult | None,
 ) -> ReviewTaskRun:
-    route = route_task(review_task, config, pinned_cli=pinned_cli)
     task_findings = [finding for finding in findings if finding.review_task == review_task]
     blocking_findings = [finding for finding in task_findings if finding.blocking]
+    status = "findings_opened" if blocking_findings else "passed"
+    if agent_result is not None and agent_result.status != "succeeded":
+        status = "failed"
     return ReviewTaskRun(
         review_task=review_task,
         provider_cli=route.provider_cli,
         model_tier=route.model_tier,
         model_id=route.model_id,
         routing_reason=route.reason,
-        status="findings_opened" if blocking_findings else "passed",
+        status=status,
         findings_count=len(task_findings),
         blocking_findings_count=len(blocking_findings),
+        reason=agent_result.reason if agent_result else None,
+        prompt_path=agent_result.prompt_path if agent_result else None,
+        output_path=agent_result.output_path if agent_result else None,
+        duration_ms=agent_result.duration_ms if agent_result else None,
     )
+
+
+def _adapter_for_cli(provider_cli: str) -> CliAgentAdapter:
+    if provider_cli == "claude":
+        return ClaudeCliAdapter()
+    if provider_cli == "codex":
+        return CodexCliAdapter()
+    raise ReviewRunError(f"unsupported review agent CLI: {provider_cli}")
+
+
+def _build_review_prompt(review_task: str, review_plan: ReviewPlan, diff_text: str | None) -> str:
+    return f"""Run CodeFlow review task `{review_task}`.
+
+Review only the provided pull request diff and changed-file plan.
+Return one JSON object with this exact top-level shape:
+
+```json
+{{"findings": []}}
+```
+
+Each finding must use these fields:
+- blocking: boolean
+- severity: critical, high, medium, low, or info
+- file_path: string or null
+- line: integer or null
+- summary: short string
+- recommendation: short string
+- review_task: "{review_task}"
+
+Changed-file plan:
+```json
+{json.dumps(review_plan.to_dict(), indent=2, sort_keys=True)}
+```
+
+Pull request diff:
+```diff
+{diff_text or ""}
+```
+"""
+
+
+def _loads_review_json(raw: str) -> dict[str, Any] | list[Any] | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, (list, dict)):
+        for key in ("result", "response", "text", "content"):
+            if isinstance(parsed, dict) and isinstance(parsed.get(key), str):
+                nested = _loads_review_json(parsed[key])
+                if nested is not None:
+                    return nested
+        return parsed
+    return None
 
 
 def _configured_blocking_severities(config: dict[str, Any]) -> set[str]:

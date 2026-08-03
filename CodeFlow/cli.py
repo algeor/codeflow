@@ -30,7 +30,7 @@ from .pull_request import (
     fetch_pull_request_changed_files,
     fetch_pull_request_diff,
 )
-from .review_runner import ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
+from .review_runner import CliReviewAgent, ReviewRunError, load_review_diff_file, load_review_finding_file, run_review_plan
 from .review_routing import detect_review_plan
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
@@ -427,6 +427,12 @@ def command_review_run(args: argparse.Namespace) -> int:
         return 1
 
     review_plan = detect_review_plan(changed_files, config)
+    agent_runner = None
+    if args.real_agent:
+        agent_runner = CliReviewAgent(
+            work_dir=Path(args.work_dir) if args.work_dir else Path(".CodeFlow/runs") / args.change_name / "reviews",
+            timeout_seconds=args.timeout_seconds,
+        )
     result = run_review_plan(
         change_name=args.change_name,
         pull_request_number=args.pr_number,
@@ -436,6 +442,7 @@ def command_review_run(args: argparse.Namespace) -> int:
         diff_text=diff_text,
         diff_source=diff_source,
         pinned_cli=None if args.agent == "auto" else args.agent,
+        agent_runner=agent_runner,
     ).to_dict()
     if args.json:
         _print_json(result)
@@ -523,6 +530,9 @@ def build_parser() -> argparse.ArgumentParser:
     review_run.add_argument("--agent", choices=["auto", "claude", "codex"], default="auto", help="Agent CLI to route review tasks to")
     review_run.add_argument("--diff-file", help="Fake PR diff text file for local harness tests")
     review_run.add_argument("--finding-file", help="Fake review findings JSON file for local harness tests")
+    review_run.add_argument("--real-agent", action="store_true", help="Invoke Claude/Codex CLI review agents instead of fake local findings only")
+    review_run.add_argument("--work-dir", help="Directory for generated review prompts and outputs")
+    review_run.add_argument("--timeout-seconds", type=int, default=600, help="Per-review-task agent timeout")
     review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
     review_run.set_defaults(func=command_review_run)
 

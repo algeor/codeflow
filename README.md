@@ -92,6 +92,12 @@ python -m CodeFlow review-run demo-change --file CodeFlow/cli.py --json
 python -m CodeFlow review-run demo-change --file CodeFlow/cli.py --diff-file /tmp/pr.diff --finding-file /tmp/findings.json --json
 ```
 
+Real local review agents are opt-in:
+
+```bash
+python -m CodeFlow review-run demo-change --pr-number 12 --agent auto --real-agent --json
+```
+
 ## Project Notes
 
 Design decisions and workflow notes live in `automation-workflow-notes.md`. That file is the working design log for the local approved-PR automation system.
