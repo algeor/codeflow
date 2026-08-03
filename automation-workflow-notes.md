@@ -80,6 +80,25 @@ Build a local LangChain/LangGraph workflow that:
 17. Repeat validation/review/fix until clean.
 18. Push final commits and mark the PR ready.
 
+## Current Gap Backlog
+
+These gaps are the ordered fix queue. Keep this section current instead of relying on chat memory.
+
+1. Environment and GitHub plumbing: load local `.env` automatically, validate GitHub repo settings, and pass `GH_HOST=github.com` plus token environment to GitHub CLI without printing secrets.
+2. Proposal PR lifecycle: make `CodeFlow propose` generate proposal/design/task/question artifacts, create a branch, commit the plan, push it, and open the plan-only GitHub PR.
+3. Approval gate: poll GitHub reviews/checks, require approval from an allowed human reviewer, reject self-approval as invalid, and treat `CHANGES_REQUESTED` as blocking.
+4. PR comment loop: post design questions, sync human replies and requested changes, revise design artifacts, and keep question/answer state durable.
+5. Real apply mode: remove dry-run-only execution, expose both Claude CLI and Codex CLI, and allow controlled local edits/commands inside agent phases.
+6. Logical-step commit runner: after `implement-validation` returns `safe_to_commit: true`, stage only workflow-owned changes, commit one meaningful step, and push the branch.
+7. Postgres persistence: write workflow runs, events, steps, agent invocations, commits, PR state, test runs, review runs, findings, and human feedback.
+8. Review role detection: infer required reviewers from changed files, risk areas, proposal metadata, and implementation handoffs.
+9. Review/fix loop: run local role-based reviews, store structured findings, fix blocking findings, rerun validation, and stop only at zero blocking findings.
+10. Test-quality review: independently verify changed tests would fail for wrong behavior and are not fake, overly mocked, skipped, or quota-filling.
+11. Token and budget accounting: extract token usage when CLIs expose it, estimate when they do not, store cost in configured currency minor units, and halt before exceeding workflow budget.
+12. RAG/indexing: index repo files, symbols, summaries, source-to-test mappings, and current change context so phases retrieve targeted context instead of rereading the whole repo.
+13. Runtime safety/resume: use dedicated worktrees, leases, idempotent state transitions, crash-safe resume, explicit abort, dirty-worktree protection, and no direct pushes to base.
+14. Final readiness and merge: verify checks, reviews, open findings, budgets, and branch state before marking ready; merge only when policy allows it.
+
 ## First Code Validation Run
 
 Orchestrator sequence:

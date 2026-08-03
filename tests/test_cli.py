@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
@@ -36,10 +36,11 @@ class DoctorTests(unittest.TestCase):
             ".CodeFlow/skills/implement-validation/SKILL.md",
         )
 
-    def run_main(self, argv: list[str]) -> tuple[int, str, str]:
+    def run_main(self, argv: list[str], *, load_env: bool = False) -> tuple[int, str, str]:
         stdout = StringIO()
         stderr = StringIO()
-        with redirect_stdout(stdout), redirect_stderr(stderr):
+        env_context = nullcontext() if load_env else patch("CodeFlow.cli.load_local_env", lambda: {})
+        with env_context, redirect_stdout(stdout), redirect_stderr(stderr):
             exit_code = main(argv)
         return exit_code, stdout.getvalue(), stderr.getvalue()
 
@@ -48,12 +49,17 @@ class DoctorTests(unittest.TestCase):
             exit_code, _, stderr = self.run_main(["doctor", "--json"])
 
         self.assertEqual(exit_code, 1)
-        log_line = json.loads(stderr.strip())
-        self.assertEqual(log_line["event"], "doctor_blocking_failure")
-        self.assertEqual(log_line["check_name"], "database")
+        log_lines = [json.loads(line) for line in stderr.splitlines()]
+        self.assertTrue(all(line["event"] == "doctor_blocking_failure" for line in log_lines))
+        self.assertIn("database", {line["check_name"] for line in log_lines})
 
     def test_doctor_passes_with_database_and_one_allowed_cli(self) -> None:
-        env = {"CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow"}
+        env = {
+            "CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow",
+            "CODEFLOW_GITHUB_OWNER": "algeor",
+            "CODEFLOW_GITHUB_REPO": "codeflow",
+            "CODEFLOW_BASE_BRANCH": "dev",
+        }
         with patch.dict(os.environ, env, clear=True), patch("CodeFlow.cli.find_executable", fake_find_executable):
             exit_code, _, stderr = self.run_main(["doctor", "--json"])
 
@@ -66,7 +72,12 @@ agent:
   default_cli: codex
   allowed_clis: [codex]
 """
-        env = {"CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow"}
+        env = {
+            "CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow",
+            "CODEFLOW_GITHUB_OWNER": "algeor",
+            "CODEFLOW_GITHUB_REPO": "codeflow",
+            "CODEFLOW_BASE_BRANCH": "dev",
+        }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.yaml"
@@ -96,7 +107,12 @@ agent:
       claude:
         model: ""
 """
-        env = {"CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow"}
+        env = {
+            "CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow",
+            "CODEFLOW_GITHUB_OWNER": "algeor",
+            "CODEFLOW_GITHUB_REPO": "codeflow",
+            "CODEFLOW_BASE_BRANCH": "dev",
+        }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "config.yaml"
@@ -112,6 +128,43 @@ agent:
         self.assertEqual(model_check["errors"], ["agent.model_profiles.strong.claude.model is required"])
         log_line = json.loads(stderr.strip())
         self.assertEqual(log_line["check_name"], "model_profiles")
+
+    def test_main_loads_local_env_before_doctor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".env").write_text(
+                "\n".join(
+                    [
+                        "CODEFLOW_DATABASE_URL=postgresql://localhost/CodeFlow",
+                        "CODEFLOW_GITHUB_OWNER=algeor",
+                        "CODEFLOW_GITHUB_REPO=codeflow",
+                        "CODEFLOW_BASE_BRANCH=dev",
+                    ]
+                )
+            )
+            (root / ".CodeFlow" / "skills").mkdir(parents=True)
+            for skill_name in REQUIRED_SKILLS:
+                skill_path = root / REQUIRED_SKILLS[skill_name]
+                skill_path.parent.mkdir(parents=True, exist_ok=True)
+                skill_path.write_text("# skill\n")
+            (root / ".CodeFlow" / "config.yaml").write_text("agent:\n  default_cli: claude\n")
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(os.environ, {}, clear=True), patch(
+                    "CodeFlow.cli.find_executable", fake_find_executable
+                ):
+                    exit_code, stdout, stderr = self.run_main(["doctor", "--json"], load_env=True)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout)
+        github_check = next(check for check in result["checks"] if check["name"] == "github_repo")
+        self.assertEqual(github_check["owner"], "algeor")
+        self.assertEqual(github_check["repo"], "codeflow")
 
     def test_run_claude_requires_dry_run_for_now(self) -> None:
         exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])

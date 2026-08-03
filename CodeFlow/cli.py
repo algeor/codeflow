@@ -9,7 +9,7 @@ from typing import Any
 
 from . import __version__
 from .command_discovery import find_executable
-from .config import ConfigError, env_settings, load_project_config, resolve_config_path
+from .config import ConfigError, env_settings, github_settings, load_local_env, load_project_config, resolve_config_path
 from .model_router import validate_model_config
 from .structured_logs import log_doctor_blocking_failures
 from .workflow_runner import ClaudePhaseAgent, WorkflowRunResult, run_implementation_workflow
@@ -75,6 +75,18 @@ def command_doctor(args: argparse.Namespace) -> int:
     if config is not None:
         model_config_errors = validate_model_config(config)
         checks.append(_check("model_profiles", not model_config_errors, errors=model_config_errors))
+
+    github = github_settings(config)
+    checks.append(
+        _check(
+            "github_repo",
+            bool(github["owner"] and github["repo"] and github["base_branch"]),
+            owner=github["owner"] or None,
+            repo=github["repo"] or None,
+            base_branch=github["base_branch"] or None,
+            host=github["host"],
+        )
+    )
 
     allowed_clis = _configured_allowed_clis(config)
     default_cli = _configured_default_cli(config)
@@ -268,6 +280,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        load_local_env()
+    except ConfigError as exc:
+        print(f"env error: {exc}", file=sys.stderr)
+        return 1
+
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args))
