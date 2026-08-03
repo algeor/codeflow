@@ -18,6 +18,7 @@ from .config import (
     load_local_env,
     load_project_config,
     resolve_config_path,
+    workflow_requires_human_approval,
 )
 from .model_router import validate_model_config
 from .proposal import ProposalError, create_proposal_artifacts
@@ -88,6 +89,8 @@ def command_doctor(args: argparse.Namespace) -> int:
         checks.append(_check("model_profiles", not model_config_errors, errors=model_config_errors))
 
     github = github_settings(config)
+    allowed_reviewers = allowed_github_reviewers(config)
+    approval_required = workflow_requires_human_approval(config)
     checks.append(
         _check(
             "github_repo",
@@ -96,6 +99,14 @@ def command_doctor(args: argparse.Namespace) -> int:
             repo=github["repo"] or None,
             base_branch=github["base_branch"] or None,
             host=github["host"],
+        )
+    )
+    checks.append(
+        _check(
+            "allowed_reviewers",
+            bool(allowed_reviewers) or not approval_required,
+            approval_required=approval_required,
+            reviewer_count=len(allowed_reviewers),
         )
     )
 

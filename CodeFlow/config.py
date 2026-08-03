@@ -93,6 +93,18 @@ def allowed_github_reviewers(config: dict[str, Any] | None, env: dict[str, str] 
     return [str(reviewer).strip() for reviewer in reviewers if str(reviewer).strip()]
 
 
+def workflow_requires_human_approval(config: dict[str, Any] | None, env: dict[str, str] | None = None) -> bool:
+    environment = env if env is not None else os.environ
+    configured_env = environment.get("CODEFLOW_REQUIRE_HUMAN_APPROVAL")
+    if configured_env is not None:
+        return _parse_bool(configured_env, default=True)
+
+    workflow_config = config.get("workflow", {}) if isinstance(config, dict) else {}
+    if not isinstance(workflow_config, dict):
+        return True
+    return _parse_bool(workflow_config.get("require_human_approval"), default=True)
+
+
 def load_project_config(path: str | None = None) -> dict[str, Any]:
     config_path = resolve_config_path(path)
     if not config_path.exists():
@@ -164,6 +176,19 @@ def _display_env_value(key: str, value: str) -> str:
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_bool(value: Any, *, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _parse_env_value(value: str) -> str:

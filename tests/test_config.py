@@ -13,6 +13,7 @@ from CodeFlow.config import (
     github_settings,
     load_local_env,
     parse_env_file,
+    workflow_requires_human_approval,
 )
 
 
@@ -90,6 +91,14 @@ class ConfigTests(unittest.TestCase):
         )
 
         self.assertEqual(reviewers, ["reviewer-one", "reviewer-two"])
+
+    def test_workflow_requires_human_approval_prefers_env(self) -> None:
+        self.assertFalse(
+            workflow_requires_human_approval(
+                {"workflow": {"require_human_approval": True}},
+                env={"CODEFLOW_REQUIRE_HUMAN_APPROVAL": "false"},
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -59,12 +59,27 @@ class DoctorTests(unittest.TestCase):
             "CODEFLOW_GITHUB_OWNER": "algeor",
             "CODEFLOW_GITHUB_REPO": "codeflow",
             "CODEFLOW_BASE_BRANCH": "dev",
+            "CODEFLOW_ALLOWED_REVIEWERS": "reviewer-one",
         }
         with patch.dict(os.environ, env, clear=True), patch("CodeFlow.cli.find_executable", fake_find_executable):
             exit_code, _, stderr = self.run_main(["doctor", "--json"])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(stderr, "")
+
+    def test_doctor_fails_without_allowed_reviewers_when_approval_required(self) -> None:
+        env = {
+            "CODEFLOW_DATABASE_URL": "postgresql://localhost/CodeFlow",
+            "CODEFLOW_GITHUB_OWNER": "algeor",
+            "CODEFLOW_GITHUB_REPO": "codeflow",
+            "CODEFLOW_BASE_BRANCH": "dev",
+        }
+        with patch.dict(os.environ, env, clear=True), patch("CodeFlow.cli.find_executable", fake_find_executable):
+            exit_code, _, stderr = self.run_main(["doctor", "--json"])
+
+        self.assertEqual(exit_code, 1)
+        log_lines = [json.loads(line) for line in stderr.splitlines()]
+        self.assertIn("allowed_reviewers", {line["check_name"] for line in log_lines})
 
     def test_doctor_fails_when_pinned_cli_is_unavailable(self) -> None:
         config = """
@@ -77,6 +92,7 @@ agent:
             "CODEFLOW_GITHUB_OWNER": "algeor",
             "CODEFLOW_GITHUB_REPO": "codeflow",
             "CODEFLOW_BASE_BRANCH": "dev",
+            "CODEFLOW_ALLOWED_REVIEWERS": "reviewer-one",
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,6 +128,7 @@ agent:
             "CODEFLOW_GITHUB_OWNER": "algeor",
             "CODEFLOW_GITHUB_REPO": "codeflow",
             "CODEFLOW_BASE_BRANCH": "dev",
+            "CODEFLOW_ALLOWED_REVIEWERS": "reviewer-one",
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -139,6 +156,7 @@ agent:
                         "CODEFLOW_GITHUB_OWNER=algeor",
                         "CODEFLOW_GITHUB_REPO=codeflow",
                         "CODEFLOW_BASE_BRANCH=dev",
+                        "CODEFLOW_ALLOWED_REVIEWERS=reviewer-one",
                     ]
                 )
             )
