@@ -211,10 +211,6 @@ def command_run(args: argparse.Namespace) -> int:
         print(f"unsupported run agent: {args.agent}", file=sys.stderr)
         return 2
 
-    if not args.dry_run:
-        print("CodeFlow run --agent claude currently requires --dry-run.", file=sys.stderr)
-        return 2
-
     try:
         config = load_project_config(args.config)
     except ConfigError as exc:
@@ -226,6 +222,18 @@ def command_run(args: argparse.Namespace) -> int:
         print("model config error: " + "; ".join(model_config_errors), file=sys.stderr)
         return 1
 
+    approval_context: dict[str, Any] = {}
+    if not args.dry_run:
+        approval_result = _approved_implementation_context(args, config)
+        if not approval_result["implementation_allowed"]:
+            if args.json:
+                _print_json(approval_result)
+            else:
+                print(f"CodeFlow run {args.change_name}: blocked before implementation")
+                print(f"blocking_reason: {approval_result['approval'].get('blocking_reason')}")
+            return 1
+        approval_context = approval_result
+
     agent = ClaudePhaseAgent(
         config=config,
         work_dir=Path(args.work_dir) if args.work_dir else Path(".CodeFlow/runs") / args.change_name,
@@ -235,8 +243,11 @@ def command_run(args: argparse.Namespace) -> int:
         print("claude CLI is not available on PATH", file=sys.stderr)
         return 1
 
-    result = run_implementation_workflow(agent, initial_context=_run_initial_context(args))
+    result = run_implementation_workflow(agent, initial_context={**_run_initial_context(args), **approval_context})
     result_data = _workflow_result_to_dict(result)
+    if approval_context:
+        result_data["approval"] = approval_context["approval"]
+        result_data["pull_request"] = approval_context["pull_request"]
 
     if args.json:
         _print_json(result_data)
@@ -252,6 +263,42 @@ def command_run(args: argparse.Namespace) -> int:
     return 0 if result.status == "completed" and result.safe_to_commit else 1
 
 
+def _approved_implementation_context(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, Any]:
+    if args.pr_number is None:
+        return {
+            "change_name": args.change_name,
+            "implementation_allowed": False,
+            "approval": {"approved": False, "approved_by": [], "changes_requested_by": [], "blocking_reason": "--pr-number is required for implementation"},
+            "pull_request": {},
+        }
+
+    try:
+        pull_request = fetch_pull_request(args.pr_number, config=config)
+    except PullRequestError as exc:
+        return {
+            "change_name": args.change_name,
+            "implementation_allowed": False,
+            "approval": {"approved": False, "approved_by": [], "changes_requested_by": [], "blocking_reason": str(exc)},
+            "pull_request": {},
+        }
+
+    approval = evaluate_pull_request_approval(pull_request, allowed_github_reviewers(config))
+    pr_summary = _pull_request_summary(pull_request)
+    implementation_allowed = bool(approval.approved and pull_request.get("state") == "OPEN")
+    blocking_reason = approval.blocking_reason
+    if approval.approved and pull_request.get("state") != "OPEN":
+        blocking_reason = f"pull request is not open: {pull_request.get('state')}"
+
+    approval_data = approval.to_dict()
+    approval_data["blocking_reason"] = blocking_reason
+    return {
+        "change_name": args.change_name,
+        "implementation_allowed": implementation_allowed,
+        "approval": approval_data,
+        "pull_request": pr_summary,
+    }
+
+
 def _run_initial_context(args: argparse.Namespace) -> dict[str, Any]:
     change_dir = Path(".CodeFlow/changes") / args.change_name
     return {
@@ -260,6 +307,16 @@ def _run_initial_context(args: argparse.Namespace) -> dict[str, Any]:
         "proposal_path": str(change_dir / "proposal.md"),
         "design_path": str(change_dir / "design.md"),
         "tasks_path": str(change_dir / "tasks.md"),
+    }
+
+
+def _pull_request_summary(pull_request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "number": pull_request.get("number"),
+        "url": pull_request.get("url"),
+        "state": pull_request.get("state"),
+        "head_ref": pull_request.get("headRefName"),
+        "base_ref": pull_request.get("baseRefName"),
     }
 
 
@@ -347,6 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--work-dir", help="Directory for generated phase prompts and outputs")
     run.add_argument("--timeout-seconds", type=int, default=600, help="Per-phase agent timeout")
+    run.add_argument("--pr-number", type=int, help="Approved GitHub PR number required for non-dry-run implementation")
     run.add_argument("--json", action="store_true", help="Print machine-readable workflow result")
     run.set_defaults(func=command_run)
 

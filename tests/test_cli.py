@@ -279,11 +279,57 @@ agent:
         self.assertTrue(output["implementation_allowed"])
         self.assertEqual(output["approval"]["approved_by"], ["reviewer-one"])
 
-    def test_run_claude_requires_dry_run_for_now(self) -> None:
-        exit_code, _, stderr = self.run_main(["run", "budget-guard", "--agent", "claude"])
+    def test_run_real_implementation_requires_pr_number(self) -> None:
+        config = """
+agent:
+  default_cli: claude
+  allowed_clis: [claude]
+github:
+  allowed_reviewers: [reviewer-one]
+"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            config_path.write_text(config)
 
-        self.assertEqual(exit_code, 2)
-        self.assertIn("requires --dry-run", stderr)
+            exit_code, stdout, stderr = self.run_main(
+                ["--config", str(config_path), "run", "budget-guard", "--agent", "claude", "--json"]
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout)
+        self.assertFalse(result["implementation_allowed"])
+        self.assertEqual(result["approval"]["blocking_reason"], "--pr-number is required for implementation")
+
+    def test_run_real_implementation_blocks_without_approval(self) -> None:
+        class StubClaudePhaseAgent:
+            instances: list["StubClaudePhaseAgent"] = []
+
+            def __init__(self, *, config, work_dir, timeout_seconds):
+                self.instances.append(self)
+
+        config = {"agent": {"default_cli": "claude", "allowed_clis": ["claude"]}, "github": {"allowed_reviewers": ["reviewer-one"]}}
+        pr_data = {
+            "number": 2,
+            "url": "https://github.com/algeor/codeflow/pull/2",
+            "state": "OPEN",
+            "author": {"login": "algeor"},
+            "reviews": [],
+        }
+
+        with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+            "CodeFlow.cli.fetch_pull_request", lambda pr_number, config: pr_data
+        ), patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent):
+            exit_code, stdout, stderr = self.run_main(
+                ["run", "budget-guard", "--agent", "claude", "--pr-number", "2", "--json"]
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout)
+        self.assertFalse(result["implementation_allowed"])
+        self.assertEqual(result["approval"]["blocking_reason"], "no approval from an allowed human reviewer")
+        self.assertEqual(StubClaudePhaseAgent.instances, [])
 
     def test_run_claude_dry_run_invokes_workflow_and_prints_json(self) -> None:
         class AvailableAdapter:
@@ -351,6 +397,77 @@ agent:
         self.assertEqual(agent.work_dir, work_dir)
         self.assertTrue(agent.contexts["init"]["dry_run"])
         self.assertEqual(agent.contexts["init"]["change_name"], "budget-guard")
+
+    def test_run_real_implementation_after_approved_pr_invokes_workflow(self) -> None:
+        class AvailableAdapter:
+            def is_available(self) -> bool:
+                return True
+
+        class StubClaudePhaseAgent:
+            instances: list["StubClaudePhaseAgent"] = []
+
+            def __init__(self, *, config, work_dir, timeout_seconds):
+                self.config = config
+                self.work_dir = work_dir
+                self.timeout_seconds = timeout_seconds
+                self.adapter = AvailableAdapter()
+                self.contexts = {}
+                self.instances.append(self)
+
+            def run_phase(self, phase, context):
+                self.contexts[phase.phase_id] = dict(context)
+                responses = {
+                    "init": {"status": "ready", "validation_commands": []},
+                    "code_creation": {
+                        "status": "completed",
+                        "logical_step": "budget-guard",
+                        "files_changed": ["CodeFlow/budget.py"],
+                        "precommit_run": {"status": "passed"},
+                    },
+                    "validation": {"status": "passed", "safe_to_commit": True, "commands_run": []},
+                }
+                return responses[phase.phase_id]
+
+        config = {"agent": {"default_cli": "claude", "allowed_clis": ["claude"]}, "github": {"allowed_reviewers": ["reviewer-one"]}}
+        pr_data = {
+            "number": 2,
+            "url": "https://github.com/algeor/codeflow/pull/2",
+            "state": "OPEN",
+            "headRefName": "plan/budget-guard",
+            "baseRefName": "dev",
+            "author": {"login": "algeor"},
+            "reviews": [{"author": {"login": "reviewer-one"}, "state": "APPROVED"}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            work_dir = Path(tmpdir) / "run"
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config), patch(
+                "CodeFlow.cli.fetch_pull_request", lambda pr_number, config: pr_data
+            ), patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "run",
+                        "budget-guard",
+                        "--agent",
+                        "claude",
+                        "--pr-number",
+                        "2",
+                        "--work-dir",
+                        str(work_dir),
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout)
+        self.assertTrue(result["safe_to_commit"])
+        self.assertEqual(result["approval"]["approved_by"], ["reviewer-one"])
+        self.assertEqual(result["pull_request"]["number"], 2)
+        agent = StubClaudePhaseAgent.instances[0]
+        self.assertFalse(agent.contexts["init"]["dry_run"])
+        self.assertTrue(agent.contexts["init"]["implementation_allowed"])
+        self.assertEqual(agent.contexts["init"]["pull_request"]["number"], 2)
 
 
 if __name__ == "__main__":
