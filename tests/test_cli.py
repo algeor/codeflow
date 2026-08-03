@@ -553,6 +553,31 @@ review:
         self.assertEqual(output["persistence"]["review_runs_count"], 2)
         self.assertEqual(output["persistence"]["review_findings_count"], 1)
 
+    def test_review_run_writes_output_file(self) -> None:
+        config = {"agent": {"default_cli": "claude"}, "review": {"roles": {"docs": {"patterns": ["**/*.md"]}}}}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = Path(tmpdir) / "nested" / "review-result.json"
+            with patch("CodeFlow.cli.load_project_config", lambda path=None: config):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "review-run",
+                        "readme-plan",
+                        "--file",
+                        "README.md",
+                        "--output-file",
+                        str(output_file),
+                        "--json",
+                    ]
+                )
+
+            file_output = json.loads(output_file.read_text())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout), file_output)
+        self.assertEqual(file_output["status"], "passed")
+
     def test_review_run_requires_pr_number_or_file(self) -> None:
         with patch("CodeFlow.cli.load_project_config", lambda path=None: {}):
             exit_code, _, stderr = self.run_main(["review-run", "readme-plan"])

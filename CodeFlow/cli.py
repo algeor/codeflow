@@ -475,6 +475,12 @@ def command_review_run(args: argparse.Namespace) -> int:
             print(f"review-run persistence error: {exc}", file=sys.stderr)
             return 1
         result["persistence"] = persistence.to_dict()
+    if args.output_file:
+        try:
+            _write_json_file(args.output_file, result)
+        except OSError as exc:
+            print(f"review-run output error: {exc}", file=sys.stderr)
+            return 1
     if args.json:
         _print_json(result)
     else:
@@ -546,6 +552,12 @@ def _load_json_file(path: str) -> dict[str, Any]:
     return parsed
 
 
+def _write_json_file(path: str, data: dict[str, Any]) -> None:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
 def command_resume(args: argparse.Namespace) -> int:
     return _scaffold_notice("resume", args.change_name)
 
@@ -614,6 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
     review_run.add_argument("--timeout-seconds", type=int, default=600, help="Per-review-task agent timeout")
     review_run.add_argument("--workflow-run-id", help="Persist review runs and findings to this workflow_runs.id")
     review_run.add_argument("--commit-sha", help="Commit SHA reviewed by this review run")
+    review_run.add_argument("--output-file", help="Write review-run JSON output to this file for review-gate or fix runs")
     review_run.add_argument("--json", action="store_true", help="Print machine-readable review run output")
     review_run.set_defaults(func=command_review_run)
 

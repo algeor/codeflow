@@ -103,7 +103,7 @@ python -m CodeFlow review-run demo-change --pr-number 12 --agent auto --real-age
 Review runs can persist to Postgres when a workflow run already exists:
 
 ```bash
-python -m CodeFlow review-run demo-change --pr-number 12 --workflow-run-id <uuid> --commit-sha <sha> --json
+python -m CodeFlow review-run demo-change --pr-number 12 --workflow-run-id <uuid> --commit-sha <sha> --output-file /tmp/review-result.json --json
 ```
 
 The review gate decides whether to stop, fix again, or finalize:
