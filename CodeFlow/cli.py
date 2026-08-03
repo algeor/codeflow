@@ -255,7 +255,13 @@ def command_run(args: argparse.Namespace) -> int:
         print("claude CLI is not available on PATH", file=sys.stderr)
         return 1
 
-    result = run_implementation_workflow(agent, initial_context={**_run_initial_context(args), **approval_context})
+    try:
+        initial_context = _run_initial_context(args)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"run context error: {exc}", file=sys.stderr)
+        return 1
+
+    result = run_implementation_workflow(agent, initial_context={**initial_context, **approval_context})
     result_data = _workflow_result_to_dict(result)
     if approval_context:
         result_data["approval"] = approval_context["approval"]
@@ -331,13 +337,23 @@ def _approved_implementation_context(args: argparse.Namespace, config: dict[str,
 
 def _run_initial_context(args: argparse.Namespace) -> dict[str, Any]:
     change_dir = Path(".CodeFlow/changes") / args.change_name
-    return {
+    context = {
         "change_name": args.change_name,
         "dry_run": bool(args.dry_run),
         "proposal_path": str(change_dir / "proposal.md"),
         "design_path": str(change_dir / "design.md"),
         "tasks_path": str(change_dir / "tasks.md"),
     }
+    if args.review_result_file:
+        review_result = _load_json_file(args.review_result_file)
+        context["fix_iteration"] = args.fix_iteration
+        context["review_result_status"] = review_result.get("status")
+        context["open_review_findings"] = [
+            finding
+            for finding in review_result.get("findings", [])
+            if isinstance(finding, dict) and finding.get("blocking")
+        ]
+    return context
 
 
 def _pull_request_summary(pull_request: dict[str, Any]) -> dict[str, Any]:
@@ -568,6 +584,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--work-dir", help="Directory for generated phase prompts and outputs")
     run.add_argument("--timeout-seconds", type=int, default=600, help="Per-phase agent timeout")
     run.add_argument("--pr-number", type=int, help="Approved GitHub PR number required for non-dry-run implementation")
+    run.add_argument("--review-result-file", help="review-run JSON file whose blocking findings should drive a fix iteration")
+    run.add_argument("--fix-iteration", type=int, default=0, help="Fix iteration number for review-driven implementation")
     run.add_argument("--json", action="store_true", help="Print machine-readable workflow result")
     run.set_defaults(func=command_run)
 

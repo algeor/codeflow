@@ -28,6 +28,7 @@ python -m CodeFlow review-run <change-name> --pr-number <number> --json
 python -m CodeFlow review-gate <change-name> --review-result-file <path> --json
 python -m CodeFlow run <change-name> --agent claude --dry-run --json
 python -m CodeFlow run <change-name> --agent claude --pr-number <number> --json
+python -m CodeFlow run <change-name> --agent claude --pr-number <number> --review-result-file <path> --fix-iteration <n> --json
 ```
 
 Scaffolded commands:
@@ -109,6 +110,12 @@ The review gate decides whether to stop, fix again, or finalize:
 
 ```bash
 python -m CodeFlow review-gate demo-change --review-result-file /tmp/review-result.json --iteration 0 --json
+```
+
+Fix iterations feed blocking review findings back into implementation:
+
+```bash
+python -m CodeFlow run demo-change --agent claude --pr-number 12 --review-result-file /tmp/review-result.json --fix-iteration 1 --json
 ```
 
 ## Project Notes

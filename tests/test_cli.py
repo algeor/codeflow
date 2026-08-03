@@ -727,6 +727,81 @@ agent:
         self.assertTrue(agent.contexts["init"]["dry_run"])
         self.assertEqual(agent.contexts["init"]["change_name"], "budget-guard")
 
+    def test_run_dry_run_passes_review_findings_to_workflow_context(self) -> None:
+        class AvailableAdapter:
+            def is_available(self) -> bool:
+                return True
+
+        class StubClaudePhaseAgent:
+            instances: list["StubClaudePhaseAgent"] = []
+
+            def __init__(self, *, config, work_dir, timeout_seconds):
+                self.adapter = AvailableAdapter()
+                self.contexts = {}
+                self.instances.append(self)
+
+            def run_phase(self, phase, context):
+                self.contexts[phase.phase_id] = dict(context)
+                responses = {
+                    "init": {"status": "ready", "validation_commands": []},
+                    "code_creation": {
+                        "status": "completed",
+                        "logical_step": "fix-review-finding",
+                        "files_changed": ["CodeFlow/cli.py"],
+                        "precommit_run": {"status": "passed"},
+                    },
+                    "validation": {"status": "passed", "safe_to_commit": True, "commands_run": []},
+                }
+                return responses[phase.phase_id]
+
+        config = """
+agent:
+  default_cli: claude
+  allowed_clis: [claude]
+"""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.yaml"
+            review_result = Path(tmpdir) / "review.json"
+            config_path.write_text(config)
+            review_result.write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "findings": [
+                            {"blocking": True, "summary": "Fix this", "review_task": "code_review"},
+                            {"blocking": False, "summary": "Nit", "review_task": "code_review"},
+                        ],
+                    }
+                )
+            )
+
+            with patch("CodeFlow.cli.ClaudePhaseAgent", StubClaudePhaseAgent):
+                exit_code, stdout, stderr = self.run_main(
+                    [
+                        "--config",
+                        str(config_path),
+                        "run",
+                        "review-fix",
+                        "--agent",
+                        "claude",
+                        "--dry-run",
+                        "--review-result-file",
+                        str(review_result),
+                        "--fix-iteration",
+                        "1",
+                        "--json",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr, "")
+        json.loads(stdout)
+        agent = StubClaudePhaseAgent.instances[0]
+        self.assertEqual(agent.contexts["init"]["fix_iteration"], 1)
+        self.assertEqual(agent.contexts["init"]["review_result_status"], "blocked")
+        self.assertEqual(agent.contexts["init"]["open_review_findings"], [{"blocking": True, "summary": "Fix this", "review_task": "code_review"}])
+
     def test_run_real_implementation_after_approved_pr_invokes_workflow(self) -> None:
         class AvailableAdapter:
             def is_available(self) -> bool:
